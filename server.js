@@ -557,10 +557,21 @@ async function fetchXtreamCatalog(xtreamUrl, username, password, preferredFormat
   if (!/^https?:\/\//i.test(baseUrl)) {
     baseUrl = 'http://' + baseUrl;
   }
+  const normalizedBase = baseUrl.replace(/:80$/, '');
 
-  const cacheKey = `v3|${baseUrl}|${username}|${password}|${preferredFormat}`;
-  const cached = catalogCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < 60 * 60 * 1000) {
+  const cacheKey = `v3|${normalizedBase}|${username}|${password}|${preferredFormat}`;
+  const cached = catalogCache.get(cacheKey) || catalogCache.get(`v3|${baseUrl}|${username}|${password}|${preferredFormat}`);
+  const hasFullCachedCatalog = Boolean(
+    cached &&
+    cached.catalog &&
+    Array.isArray(cached.catalog.liveStreams) &&
+    cached.catalog.liveStreams.length > 50 &&
+    Array.isArray(cached.catalog.vodStreams) &&
+    cached.catalog.vodStreams.length > 50
+  );
+
+  // Em servidores Cloud (Render/AWS), retorna o catálogo completo em cache imediatamente (TTL de 7 dias com fallback perpétuo)
+  if (hasFullCachedCatalog && Date.now() - cached.timestamp < 7 * 24 * 60 * 60 * 1000) {
     return cached.catalog;
   }
 
@@ -569,6 +580,7 @@ async function fetchXtreamCatalog(xtreamUrl, username, password, preferredFormat
   // 1. Verifica autenticação
   const authRes = await fetch(apiBase, { headers: IPTV_HEADERS }).then(r => r.json()).catch(() => null);
   if (!authRes || (authRes.user_info && Number(authRes.user_info.auth) === 0)) {
+    if (hasFullCachedCatalog) return cached.catalog;
     throw new Error('Credenciais recusadas pelo servidor IPTV.');
   }
 
@@ -579,6 +591,14 @@ async function fetchXtreamCatalog(xtreamUrl, username, password, preferredFormat
   const vodStreamsRes = await fetch(`${apiBase}&action=get_vod_streams`, { headers: IPTV_HEADERS }).then(r => r.json()).catch(() => []);
   const seriesCatsRes = await fetch(`${apiBase}&action=get_series_categories`, { headers: IPTV_HEADERS }).then(r => r.json()).catch(() => []);
   const seriesListRes = await fetch(`${apiBase}&action=get_series`, { headers: IPTV_HEADERS }).then(r => r.json()).catch(() => []);
+
+  // Se o servidor Cloud (IP de Datacenter EUA) sofreu bloqueio parcial do firewall IPTV, preserva o catálogo completo em cache!
+  if (
+    hasFullCachedCatalog &&
+    (!Array.isArray(liveStreamsRes) || liveStreamsRes.length === 0 || !Array.isArray(vodStreamsRes) || vodStreamsRes.length === 0)
+  ) {
+    return cached.catalog;
+  }
 
   const ext = preferredFormat === 'm3u8' ? 'm3u8' : 'ts';
 
@@ -1045,6 +1065,26 @@ app.post('/api/player/login', async (req, res) => {
     console.warn('Aviso: Falha ao carregar fonte externa:', err.message);
   }
 
+  let resolvedXtreamOrigin = catalog && catalog.xtreamOrigin ? catalog.xtreamOrigin : null;
+  if (!resolvedXtreamOrigin) {
+    if (client.xtreamUrl && client.xtreamUser && client.xtreamPass) {
+      resolvedXtreamOrigin = {
+        baseUrl: client.xtreamUrl.trim().replace(/\/+$/, ''),
+        username: client.xtreamUser.trim(),
+        password: client.xtreamPass.trim()
+      };
+    } else if (client.m3uUrl) {
+      const extX = extractXtreamFromM3uUrl(client.m3uUrl);
+      if (extX) {
+        resolvedXtreamOrigin = {
+          baseUrl: extX.baseUrl,
+          username: extX.username,
+          password: extX.password
+        };
+      }
+    }
+  }
+
   return res.json({
     ok: true,
     profile: {
@@ -1058,7 +1098,8 @@ app.post('/api/player/login', async (req, res) => {
       parentalPin: client.parentalPin || '0000',
       iptvSourceType: client.iptvSourceType || 'demo',
       sourceLabel,
-      maxConnections: client.maxConnections || 1
+      maxConnections: client.maxConnections || 1,
+      xtreamOrigin: resolvedXtreamOrigin
     },
     settings: db.settings,
     catalog

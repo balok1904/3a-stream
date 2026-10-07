@@ -495,9 +495,32 @@ async function performLogin(username, password) {
       return;
     }
 
+    let finalCatalog = data.catalog;
+    const xo = data.profile && data.profile.xtreamOrigin;
+    const isCatalogIncomplete =
+      !finalCatalog ||
+      !finalCatalog.isRealList ||
+      !Array.isArray(finalCatalog.liveStreams) ||
+      finalCatalog.liveStreams.length < 50 ||
+      !Array.isArray(finalCatalog.vodStreams) ||
+      finalCatalog.vodStreams.length < 50;
+
+    if (xo && xo.baseUrl && xo.username && xo.password && isCatalogIncomplete) {
+      try {
+        finalCatalog = await standaloneXtreamFetchCatalog(
+          xo.baseUrl,
+          xo.username,
+          xo.password,
+          appState.preferences.streamFormat
+        );
+      } catch (directFetchErr) {
+        console.warn('Aviso fallback direto:', directFetchErr);
+      }
+    }
+
     appState.loggedIn = true;
     appState.profile = data.profile;
-    appState.catalog = data.catalog;
+    appState.catalog = finalCatalog;
     appState.macAddress = data.profile.macAddress || appState.macAddress;
     localStorage.setItem('3a_mac_address', appState.macAddress);
     updateMacDisplays();
@@ -506,7 +529,7 @@ async function performLogin(username, password) {
     document.getElementById('homeExpirationDate').textContent = data.profile.expiresAtFormatted || '15/06/2026';
 
     navigateToScreen('screenHome');
-    showToast(`✅ Bem-vindo, ${data.profile.name}! Lista carregada.`);
+    showToast(`✅ Bem-vindo, ${data.profile.name}! Lista completa carregada.`);
   } catch (err) {
     // Fallback Standalone Direto para o APK Mobile caso o servidor nuvem/PC esteja indisponível
     const standaloneAccounts = {
