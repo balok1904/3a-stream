@@ -42,7 +42,7 @@ const IS_NATIVE_APK = Boolean(
   (window.location.hostname === 'localhost' && window.location.port !== '3000')
 );
 
-const DEFAULT_CLOUD_BACKEND = 'https://threea-stream.onrender.com';
+const DEFAULT_CLOUD_BACKEND = 'https://app-3a-stream.onrender.com';
 const DEFAULT_LAN_BACKEND = localStorage.getItem('3a_backend_url') || DEFAULT_CLOUD_BACKEND;
 
 async function apiFetch(path, options = {}) {
@@ -51,8 +51,8 @@ async function apiFetch(path, options = {}) {
   }
   const savedUrl = localStorage.getItem('3a_backend_url');
   const candidateUrls = savedUrl
-    ? [savedUrl.replace(/\/+$/, ''), 'https://threea-stream.onrender.com', 'http://192.168.0.12:3000']
-    : ['https://threea-stream.onrender.com', 'https://app-3a-stream.onrender.com', 'https://3a-stream.onrender.com', 'http://192.168.0.12:3000'];
+    ? [savedUrl.replace(/\/+$/, ''), 'https://app-3a-stream.onrender.com', 'https://threea-stream.onrender.com', 'http://192.168.0.12:3000']
+    : ['https://app-3a-stream.onrender.com', 'https://threea-stream.onrender.com', 'http://192.168.0.12:3000'];
 
   let lastErr = null;
   for (const baseUrl of candidateUrls) {
@@ -534,11 +534,7 @@ async function performLogin(username, password) {
     // Fallback Standalone Direto para o APK Mobile caso o servidor nuvem/PC esteja indisponível
     const standaloneAccounts = {
       'teste': { pass: '123', host: 'http://sevdns.sbs:80', xUser: '603279198', xPass: '448213191', name: 'Teste', exp: '06/11/2026', pin: '0000' },
-      'asmj10': { pass: 'athena10$GA', host: 'http://sev3u.sbs:80', xUser: '371047218', xPass: '357753734', name: 'Balok', exp: '15/06/2027', pin: '1904' },
-      '371047218': { pass: '357753734', host: 'http://sev3u.sbs:80', xUser: '371047218', xPass: '357753734', name: 'Assinante Real (sev3u.sbs)', exp: '08/05/2026', pin: '0000' },
-      '648996281': { pass: '405660398', host: 'http://sev3u.sbs:80', xUser: '371047218', xPass: '357753734', name: 'Assinante Real (sev3u.sbs)', exp: '08/05/2026', pin: '0000' },
-      'cliente': { pass: '123', host: 'http://sev3u.sbs:80', xUser: '371047218', xPass: '357753734', name: 'João Silva (Plano Ouro)', exp: '08/05/2026', pin: '0000' },
-      'admin': { pass: '123', host: 'http://sev3u.sbs:80', xUser: '371047218', xPass: '357753734', name: 'Administrador 3A', exp: '15/06/2027', pin: '0000' }
+      'asmj10': { pass: 'athena10$GA', host: 'http://sev3u.sbs:80', xUser: '371047218', xPass: '357753734', name: 'Balok', exp: '15/06/2027', pin: '1904' }
     };
     const matched = standaloneAccounts[username];
     if (matched && matched.pass === password) {

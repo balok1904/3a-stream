@@ -6,8 +6,90 @@ let adminState = {
 
 document.addEventListener('DOMContentLoaded', () => {
   initAdminDialogFallback();
-  loadAdminOverview();
+  const savedToken = sessionStorage.getItem('3a_admin_token');
+  if (savedToken) {
+    loadAdminOverview();
+  } else {
+    showAdminLoginGate();
+  }
 });
+
+function showAdminLoginGate(errorMsg = '') {
+  const loginScreen = document.getElementById('adminLoginScreen');
+  const dashShell = document.getElementById('adminDashboardShell');
+  const errEl = document.getElementById('adminLoginError');
+  if (dashShell) dashShell.style.display = 'none';
+  if (loginScreen) loginScreen.style.display = 'flex';
+  if (errEl) {
+    if (errorMsg) {
+      errEl.textContent = errorMsg;
+      errEl.style.display = 'block';
+    } else {
+      errEl.style.display = 'none';
+    }
+  }
+}
+
+async function submitAdminLogin(event) {
+  event.preventDefault();
+  const username = document.getElementById('adminUserField').value.trim();
+  const password = document.getElementById('adminPassField').value.trim();
+  const btn = document.getElementById('btnAdminLoginSubmit');
+  const errEl = document.getElementById('adminLoginError');
+  if (errEl) errEl.style.display = 'none';
+
+  const origText = btn.textContent;
+  btn.textContent = '⏳ Verificando credenciais...';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok || !data.token) {
+      showAdminLoginGate(data.error || 'Credenciais de Administrador inválidas.');
+      return;
+    }
+
+    sessionStorage.setItem('3a_admin_token', data.token);
+    document.getElementById('adminPassField').value = '';
+    await loadAdminOverview();
+  } catch (err) {
+    showAdminLoginGate('Erro de conexão ao autenticar.');
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
+}
+
+function logoutAdminPanel() {
+  sessionStorage.removeItem('3a_admin_token');
+  adminState.clients = [];
+  adminState.payments = [];
+  const uField = document.getElementById('adminUserField');
+  const pField = document.getElementById('adminPassField');
+  if (uField) uField.value = '';
+  if (pField) pField.value = '';
+  showAdminLoginGate();
+}
+
+async function adminFetch(url, options = {}) {
+  const token = sessionStorage.getItem('3a_admin_token') || '';
+  const headers = {
+    ...(options.headers || {}),
+    Authorization: `Bearer ${token}`
+  };
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401) {
+    sessionStorage.removeItem('3a_admin_token');
+    showAdminLoginGate('Sessão expirada ou acesso restrito. Faça login novamente.');
+    throw new Error('Unauthorized');
+  }
+  return res;
+}
 
 function initAdminDialogFallback() {
   const dialog = document.getElementById('clientDialog');
@@ -31,9 +113,14 @@ function initAdminDialogFallback() {
 
 async function loadAdminOverview() {
   try {
-    const res = await fetch('/api/admin/overview');
+    const res = await adminFetch('/api/admin/overview');
     const data = await res.json();
     if (!data.ok) return;
+
+    const loginScreen = document.getElementById('adminLoginScreen');
+    const dashShell = document.getElementById('adminDashboardShell');
+    if (loginScreen) loginScreen.style.display = 'none';
+    if (dashShell) dashShell.style.display = 'block';
 
     adminState.clients = data.clients || [];
     adminState.payments = data.payments || [];
@@ -199,7 +286,7 @@ async function saveClientForm(event) {
     m3uUrl: document.getElementById('cliM3uUrl').value.trim()
   };
 
-  const res = await fetch('/api/admin/clients', {
+  const res = await adminFetch('/api/admin/clients', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -216,7 +303,7 @@ async function saveClientForm(event) {
 }
 
 async function renewClient(id) {
-  const res = await fetch(`/api/admin/clients/${id}/renew`, {
+  const res = await adminFetch(`/api/admin/clients/${id}/renew`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ days: 30, method: 'PIX' })
@@ -229,7 +316,7 @@ async function renewClient(id) {
 }
 
 async function toggleClientStatus(id) {
-  const res = await fetch(`/api/admin/clients/${id}/toggle-status`, { method: 'POST' });
+  const res = await adminFetch(`/api/admin/clients/${id}/toggle-status`, { method: 'POST' });
   const data = await res.json();
   if (data.ok) {
     showAdminToast(`🔄 Status do cliente atualizado para: ${data.client.status.toUpperCase()}`);
@@ -238,7 +325,7 @@ async function toggleClientStatus(id) {
 }
 
 async function deleteClient(id) {
-  await fetch(`/api/admin/clients/${id}`, { method: 'DELETE' });
+  await adminFetch(`/api/admin/clients/${id}`, { method: 'DELETE' });
   showAdminToast('🗑️ Cliente removido.');
   loadAdminOverview();
 }

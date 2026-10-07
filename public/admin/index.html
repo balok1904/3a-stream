@@ -199,26 +199,113 @@
         display: none;
         z-index: 99;
       }
+      /* Tela de Login Restrito do Painel Admin */
+      .admin-login-screen {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+      .admin-login-card {
+        width: 100%;
+        max-width: 420px;
+        background: rgba(18, 22, 34, 0.94);
+        border: 1px solid rgba(56, 189, 248, 0.28);
+        border-radius: 16px;
+        padding: 32px 28px;
+        box-shadow: 0 25px 60px rgba(0, 0, 0, 0.75);
+      }
+      .admin-login-brand {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        margin-bottom: 24px;
+      }
+      .admin-login-brand img {
+        width: 64px;
+        height: 64px;
+        border-radius: 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 8px 24px rgba(6, 182, 212, 0.35);
+        border: 1px solid rgba(103, 232, 249, 0.4);
+      }
+      .admin-login-brand h2 {
+        font-size: 20px;
+        font-weight: 800;
+      }
+      .admin-login-brand p {
+        font-size: 12.5px;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .admin-login-error {
+        background: rgba(220, 38, 38, 0.18);
+        border: 1px solid rgba(248, 113, 113, 0.4);
+        color: #fca5a5;
+        padding: 10px 12px;
+        border-radius: 8px;
+        font-size: 12.5px;
+        margin-bottom: 14px;
+        display: none;
+      }
   </style>
 </head>
 <body>
 
-  <header>
-    <div class="brand">
-      <img src="logo-3a-stream.jpg" alt="3A Stream" class="brand-logo-img" />
-      <div>
-        <h1>3A Stream — Painel de Controle & Gestor IPTV</h1>
-        <p>Gerenciamento de Clientes, Mensalidades, Bloqueio Automático e Provisionamento Xtream API / M3U</p>
+  <!-- TELA DE LOGIN RESTRITO DO PAINEL ADMIN -->
+  <div id="adminLoginScreen" class="admin-login-screen">
+    <div class="admin-login-card">
+      <div class="admin-login-brand">
+        <img src="logo-3a-stream.jpg" alt="3A Stream" />
+        <h2>Painel Restrito — 3A Stream</h2>
+        <p>Informe suas credenciais de Administrador para gerenciar clientes</p>
+      </div>
+
+      <div id="adminLoginError" class="admin-login-error"></div>
+
+      <form onsubmit="submitAdminLogin(event)" autocomplete="off">
+        <div style="margin-bottom: 14px;">
+          <label for="adminUserField">USUÁRIO ADMINISTRADOR</label>
+          <input type="text" id="adminUserField" placeholder="Digite seu usuário admin" required autocomplete="off" />
+        </div>
+        <div style="margin-bottom: 20px;">
+          <label for="adminPassField">SENHA</label>
+          <input type="password" id="adminPassField" placeholder="••••••••" required autocomplete="new-password" />
+        </div>
+        <button type="submit" id="btnAdminLoginSubmit" class="btn btn-green" style="width:100%;justify-content:center;padding:12px;">
+          🔒 Entrar no Painel de Controle
+        </button>
+      </form>
+
+      <div style="margin-top:18px;text-align:center;">
+        <a href="/player" style="color:#38bdf8;font-size:12.5px;text-decoration:none;font-weight:600;">
+          📺 Ir para o Player de Clientes (3A Stream)
+        </a>
       </div>
     </div>
-    <div class="top-actions">
-      <button type="button" class="btn btn-green" onclick="openClientModal()">➕ Novo Cliente / Assinatura</button>
-      <a href="/3A-Stream-Mobile.apk" download="3A-Stream-Mobile.apk" class="btn btn-cyan">📲 Baixar APK Mobile</a>
-      <a href="/player" class="btn btn-blue">🤖 Abrir App / Player 3A Stream</a>
-    </div>
-  </header>
+  </div>
 
-  <div class="container">
+  <!-- CONTEÚDO DO DASHBOARD (OCULTO ATÉ AUTENTICAÇÃO) -->
+  <div id="adminDashboardShell" style="display:none;">
+    <header>
+      <div class="brand">
+        <img src="logo-3a-stream.jpg" alt="3A Stream" class="brand-logo-img" />
+        <div>
+          <h1>3A Stream — Painel de Controle & Gestor IPTV</h1>
+          <p>Gerenciamento de Clientes, Mensalidades, Bloqueio Automático e Provisionamento Xtream API / M3U</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button type="button" class="btn btn-green" onclick="openClientModal()">➕ Novo Cliente / Assinatura</button>
+        <a href="/3A-Stream-Mobile.apk" download="3A-Stream-Mobile.apk" class="btn btn-cyan">📲 Baixar APK Mobile</a>
+        <a href="/player" class="btn btn-blue">🤖 Abrir App / Player 3A Stream</a>
+        <button type="button" class="btn btn-red" onclick="logoutAdminPanel()">🚪 Sair</button>
+      </div>
+    </header>
+
+    <div class="container">
 
     <!-- KPIs FINANCEIROS E OPERACIONAIS -->
     <div class="kpi-grid">
@@ -307,7 +394,7 @@
         </ol>
       </div>
     </div>
-
+    </div>
   </div>
 
   <!-- MODAL CRIAR / EDITAR CLIENTE E CREDENCIAIS XTREAM / M3U -->

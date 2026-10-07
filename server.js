@@ -1128,10 +1128,60 @@ app.post('/api/player/custom-playlist', async (req, res) => {
 });
 
 // ============================================================================
-// ROTAS DA API DO PAINEL DE CONTROLE (ADMIN DASHBOARD)
+// AUTENTICAÇÃO E ROTAS PROTEGIDAS DO PAINEL DE CONTROLE (ADMIN DASHBOARD)
 // ============================================================================
+const crypto = require('crypto');
+const ADMIN_MASTER_USER = process.env.ADMIN_USER || 'asmj10';
+const ADMIN_MASTER_PASS = process.env.ADMIN_PASS || 'athena10$GA';
+const ADMIN_TOKEN_SECRET = process.env.ADMIN_SECRET || '3a_stream_master_secret_2026_balok';
 
-app.get('/api/admin/overview', (req, res) => {
+function generateAdminToken(username) {
+  const cleanUser = String(username).trim().toLowerCase();
+  const sig = crypto.createHmac('sha256', ADMIN_TOKEN_SECRET).update(cleanUser).digest('hex');
+  return `${cleanUser}.${sig}`;
+}
+
+function verifyAdminToken(token) {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return false;
+  const [user, sig] = token.split('.');
+  if (user !== ADMIN_MASTER_USER.toLowerCase()) return false;
+  const expected = crypto.createHmac('sha256', ADMIN_TOKEN_SECRET).update(user).digest('hex');
+  return sig === expected;
+}
+
+function requireAdminAuth(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+  if (!verifyAdminToken(token)) {
+    return res.status(401).json({
+      ok: false,
+      error: 'Acesso restrito. Faça login como Administrador para acessar o painel.'
+    });
+  }
+  next();
+}
+
+// Login do Administrador no Painel (/admin)
+app.post('/api/admin/login', (req, res) => {
+  const { username, password } = req.body || {};
+  const u = String(username || '').trim();
+  const p = String(password || '').trim();
+
+  if (u.toLowerCase() === ADMIN_MASTER_USER.toLowerCase() && p === ADMIN_MASTER_PASS) {
+    return res.json({
+      ok: true,
+      token: generateAdminToken(u),
+      adminName: 'Balok (Administrador 3A)'
+    });
+  }
+
+  return res.status(401).json({
+    ok: false,
+    error: 'Credenciais de Administrador inválidas.'
+  });
+});
+
+app.get('/api/admin/overview', requireAdminAuth, (req, res) => {
   const db = loadDb();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -1185,7 +1235,7 @@ app.get('/api/admin/overview', (req, res) => {
 });
 
 // Criar ou Atualizar Cliente no Painel Admin
-app.post('/api/admin/clients', (req, res) => {
+app.post('/api/admin/clients', requireAdminAuth, (req, res) => {
   const db = loadDb();
   const payload = req.body;
 
@@ -1234,7 +1284,7 @@ app.post('/api/admin/clients', (req, res) => {
 });
 
 // Renovar Mensalidade (+30 dias) e registrar pagamento
-app.post('/api/admin/clients/:id/renew', (req, res) => {
+app.post('/api/admin/clients/:id/renew', requireAdminAuth, (req, res) => {
   const db = loadDb();
   const client = db.clients.find(c => c.id === req.params.id);
   if (!client) return res.status(404).json({ ok: false, error: 'Cliente não encontrado.' });
@@ -1263,7 +1313,7 @@ app.post('/api/admin/clients/:id/renew', (req, res) => {
 });
 
 // Alternar Status Ativo / Bloqueado
-app.post('/api/admin/clients/:id/toggle-status', (req, res) => {
+app.post('/api/admin/clients/:id/toggle-status', requireAdminAuth, (req, res) => {
   const db = loadDb();
   const client = db.clients.find(c => c.id === req.params.id);
   if (!client) return res.status(404).json({ ok: false, error: 'Cliente não encontrado.' });
@@ -1274,7 +1324,7 @@ app.post('/api/admin/clients/:id/toggle-status', (req, res) => {
 });
 
 // Excluir Cliente
-app.delete('/api/admin/clients/:id', (req, res) => {
+app.delete('/api/admin/clients/:id', requireAdminAuth, (req, res) => {
   const db = loadDb();
   db.clients = db.clients.filter(c => c.id !== req.params.id);
   saveDb(db);
@@ -1306,9 +1356,9 @@ app.get('/3A-Stream-Mobile.apk', (req, res) => {
   res.status(404).send('APK ainda não encontrado na raiz do projeto.');
 });
 
-// Rota raiz redireciona para um Hub de Lançamento (Testbench Android + Dashboard Admin)
+// Rota raiz redireciona para o Player (Login do Cliente)
 app.get('/', (req, res) => {
-  res.redirect('/admin');
+  res.redirect('/player');
 });
 
 app.listen(PORT, '0.0.0.0', () => {

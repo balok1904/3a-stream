@@ -58,27 +58,6 @@
       "maxConnections": 2,
       "notes": "Conta principal para homologação do aplicativo 3A Stream.",
       "lastLoginAt": "2026-10-07T20:03:54.479Z"
-    },
-    {
-      "id": "cli_admin",
-      "name": "Administrador 3A (VIP)",
-      "phone": "(11) 99999-0001",
-      "username": "admin",
-      "password": "123",
-      "macAddress": "61:F3:CF:92:93:B1",
-      "planName": "Plano 3A Completo 4K",
-      "monthlyPrice": 35,
-      "expiresAt": "2027-06-15",
-      "status": "active",
-      "parentalPin": "0000",
-      "iptvSourceType": "xtream",
-      "xtreamUrl": "http://sev3u.sbs",
-      "xtreamUser": "371047218",
-      "xtreamPass": "357753734",
-      "m3uUrl": "http://sev3u.sbs:80/get.php?username=371047218&password=357753734&type=m3u_plus&output=mpegts",
-      "maxConnections": 2,
-      "notes": "Conta Admin padrão com lista completa.",
-      "lastLoginAt": "2026-10-07T20:03:54.479Z"
     }
   ],
   "payments": [

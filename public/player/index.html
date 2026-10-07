@@ -26,14 +26,10 @@
       <button type="button" class="tb-btn active" id="btnModeTv" onclick="setSimulatorFrame('tvbox')">📺 Widescreen TV</button>
       <button type="button" class="tb-btn" id="btnModeFull" onclick="setSimulatorFrame('fullscreen')">🖥️ Tela Cheia</button>
       <button type="button" class="tb-btn" id="btnModeMobile" onclick="setSimulatorFrame('mobile')">📱 Mobile Android</button>
-      <span class="tb-divider">|</span>
-      <span class="tb-quick-label">Login Rápido:</span>
-      <button type="button" class="tb-chip tb-chip-ok" onclick="quickFillLogin('admin','123')">⚡ Ativo (admin)</button>
-      <button type="button" class="tb-chip tb-chip-err" onclick="quickFillLogin('carlos','123')">🚫 Vencido (carlos)</button>
     </div>
     <div class="tb-right">
       <a href="/3A-Stream-Mobile.apk" download="3A-Stream-Mobile.apk" class="tb-apk-link">📲 Baixar APK Mobile</a>
-      <a href="/admin" class="tb-admin-link">⚙️ Painel Admin</a>
+      <a href="/admin" class="tb-admin-link">🔒 Painel Admin</a>
     </div>
   </header>
 
@@ -78,12 +74,12 @@
           <div id="loginErrorBox" class="login-error-box hidden"></div>
 
           <!-- ABA 1: CONTA 3A GERENCIADA PELO PAINEL ADMIN -->
-          <form id="loginForm" class="login-form" onsubmit="handleLoginSubmit(event)">
+          <form id="loginForm" class="login-form" onsubmit="handleLoginSubmit(event)" autocomplete="off">
             <div class="input-group">
               <label for="loginUsername">USUÁRIO 3A STREAM</label>
               <div class="input-with-icon">
                 <span class="input-icon">👤</span>
-                <input type="text" id="loginUsername" class="focusable" placeholder="Seu usuário (ex: admin)" value="admin" required autocomplete="off" />
+                <input type="text" id="loginUsername" class="focusable" placeholder="Digite seu usuário" value="" required autocomplete="off" />
               </div>
             </div>
 
@@ -91,7 +87,7 @@
               <label for="loginPassword">SENHA</label>
               <div class="input-with-icon">
                 <span class="input-icon">🔒</span>
-                <input type="password" id="loginPassword" class="focusable" placeholder="••••••••" value="123" required />
+                <input type="password" id="loginPassword" class="focusable" placeholder="••••••••" value="" required autocomplete="new-password" />
               </div>
             </div>
 
@@ -113,12 +109,12 @@
           </form>
 
           <!-- ABA 2: XTREAM CODES API DIRETO (IDÊNTICO AO PRINT DE REFERÊNCIA) -->
-          <form id="xtreamDirectForm" class="login-form hidden" onsubmit="handleDirectXtreamSubmit(event)">
+          <form id="xtreamDirectForm" class="login-form hidden" onsubmit="handleDirectXtreamSubmit(event)" autocomplete="off">
             <div class="input-group">
               <label for="directXtreamHost">SERVIDOR / URL (DNS)</label>
               <div class="input-with-icon">
                 <span class="input-icon">🌐</span>
-                <input type="text" id="directXtreamHost" class="focusable" placeholder="http://servidor.net:80" value="http://sev3u.sbs:80" required />
+                <input type="text" id="directXtreamHost" class="focusable" placeholder="http://servidor.net:80" value="" required autocomplete="off" />
               </div>
             </div>
 
@@ -126,7 +122,7 @@
               <label for="directXtreamUser">USUÁRIO</label>
               <div class="input-with-icon">
                 <span class="input-icon">👤</span>
-                <input type="text" id="directXtreamUser" class="focusable" placeholder="Seu usuário Xtream" value="371047218" required />
+                <input type="text" id="directXtreamUser" class="focusable" placeholder="Seu usuário Xtream" value="" required autocomplete="off" />
               </div>
             </div>
 
@@ -134,7 +130,7 @@
               <label for="directXtreamPass">SENHA</label>
               <div class="input-with-icon">
                 <span class="input-icon">🔒</span>
-                <input type="password" id="directXtreamPass" class="focusable" placeholder="••••••••" value="357753734" required />
+                <input type="password" id="directXtreamPass" class="focusable" placeholder="••••••••" value="" required autocomplete="new-password" />
               </div>
             </div>
 
@@ -156,12 +152,12 @@
           </form>
 
           <!-- ABA 3: LINK M3U / M3U8 DIRETO -->
-          <form id="m3uDirectForm" class="login-form hidden" onsubmit="handleDirectM3uSubmit(event)">
+          <form id="m3uDirectForm" class="login-form hidden" onsubmit="handleDirectM3uSubmit(event)" autocomplete="off">
             <div class="input-group">
               <label for="directM3uUrl">LINK DA LISTA M3U / M3U8</label>
               <div class="input-with-icon">
                 <span class="input-icon">🔗</span>
-                <input type="url" id="directM3uUrl" class="focusable" placeholder="http://servidor.sbs:80/get.php?username=...&password=..." value="http://sev3u.sbs:80/get.php?username=371047218&password=357753734&type=m3u_plus&output=mpegts" required />
+                <input type="url" id="directM3uUrl" class="focusable" placeholder="http://servidor.sbs:80/get.php?username=...&password=..." value="" required autocomplete="off" />
               </div>
               <small class="input-helper">Converte automaticamente links get.php para Xtream API (TV, Filmes e Séries completos).</small>
             </div>
