@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>3A Stream - Player Inteligente IPTV & Cinema</title>
+  <link rel="icon" type="image/jpeg" href="logo-3a-stream.jpg" />
+  <link rel="apple-touch-icon" href="logo-3a-stream.jpg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <!-- HLS.js (.m3u8) e MPEGTS.js (.ts) para reprodução de listas IPTV reais -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js"></script>
+</head>
+<body class="mode-tvbox">
+
+  <!-- BARRA DO AMBIENTE DE TESTES ANDROID (OCULTA AUTOMATICAMENTE DENTRO DO APK NATIVO) -->
+  <header id="testbenchBar" class="testbench-bar">
+    <div class="tb-left">
+      <span class="tb-badge">🤖 3A STREAM STUDIO</span>
+      <span class="tb-title">Web & Android APK v2.0</span>
+    </div>
+    <div class="tb-center">
+      <button type="button" class="tb-btn active" id="btnModeTv" onclick="setSimulatorFrame('tvbox')">📺 Widescreen TV</button>
+      <button type="button" class="tb-btn" id="btnModeFull" onclick="setSimulatorFrame('fullscreen')">🖥️ Tela Cheia</button>
+      <button type="button" class="tb-btn" id="btnModeMobile" onclick="setSimulatorFrame('mobile')">📱 Mobile Android</button>
+      <span class="tb-divider">|</span>
+      <span class="tb-quick-label">Login Rápido:</span>
+      <button type="button" class="tb-chip tb-chip-ok" onclick="quickFillLogin('admin','123')">⚡ Ativo (admin)</button>
+      <button type="button" class="tb-chip tb-chip-err" onclick="quickFillLogin('carlos','123')">🚫 Vencido (carlos)</button>
+    </div>
+    <div class="tb-right">
+      <a href="/3A-Stream-Mobile.apk" download="3A-Stream-Mobile.apk" class="tb-apk-link">📲 Baixar APK Mobile</a>
+      <a href="/admin" class="tb-admin-link">⚙️ Painel Admin</a>
+    </div>
+  </header>
+
+  <!-- WORKSPACE DO EMULADOR ANDROID -->
+  <main class="emulator-workspace">
+
+    <!-- TELA DO DISPOSITIVO ANDROID / TV BOX -->
+    <div id="deviceViewport" class="device-viewport">
+
+      <!-- =================================================================
+           1. TELA DE LOGIN MODERNA (FIEL AO PRINT DE REFERÊNCIA + CONTA 3A)
+           ================================================================= -->
+      <section id="screenLogin" class="app-screen active">
+        <div class="login-container">
+          <!-- Brand Logo Header -->
+          <div class="brand-logo-wrap">
+            <div class="brand-header-row">
+              <img src="logo-3a-stream.jpg" alt="3A Stream Logo" class="brand-logo-img" />
+              <div class="brand-wordmark">
+                <span class="brand-3a">3A</span> <span class="brand-stream">STREAM</span>
+              </div>
+            </div>
+            <p class="brand-subtitle">Player Premium para Assinantes 3A, Xtream Codes e M3U</p>
+          </div>
+
+          <!-- Auth Tabs Navigation (Fiel ao Print de Referência) -->
+          <div class="auth-tabs-nav" role="tablist">
+            <button type="button" id="tabAccountBtn" class="auth-tab-btn active focusable" onclick="switchAuthTab('account')">
+              Conta 3A
+            </button>
+            <button type="button" id="tabXtreamBtn" class="auth-tab-btn focusable" onclick="switchAuthTab('xtream')">
+              Xtream API
+            </button>
+            <button type="button" id="tabM3uBtn" class="auth-tab-btn focusable" onclick="switchAuthTab('m3u')">
+              Link M3U
+            </button>
+            <button type="button" id="tabDemoBtn" class="auth-tab-btn focusable" onclick="switchAuthTab('demo')">
+              Demonstração
+            </button>
+          </div>
+
+          <div id="loginErrorBox" class="login-error-box hidden"></div>
+
+          <!-- ABA 1: CONTA 3A GERENCIADA PELO PAINEL ADMIN -->
+          <form id="loginForm" class="login-form" onsubmit="handleLoginSubmit(event)">
+            <div class="input-group">
+              <label for="loginUsername">USUÁRIO 3A STREAM</label>
+              <div class="input-with-icon">
+                <span class="input-icon">👤</span>
+                <input type="text" id="loginUsername" class="focusable" placeholder="Seu usuário (ex: admin)" value="admin" required autocomplete="off" />
+              </div>
+            </div>
+
+            <div class="input-group">
+              <label for="loginPassword">SENHA</label>
+              <div class="input-with-icon">
+                <span class="input-icon">🔒</span>
+                <input type="password" id="loginPassword" class="focusable" placeholder="••••••••" value="123" required />
+              </div>
+            </div>
+
+            <div class="auth-checkbox-group">
+              <label class="auth-checkbox-label">
+                <input type="checkbox" id="chkUseCorsProxyAccount" checked />
+                <span>Usar Proxy CORS Anti-Bloqueio (Recomendado para servidores HTTP)</span>
+              </label>
+              <label class="auth-checkbox-label">
+                <input type="checkbox" id="chkRememberAccount" checked />
+                <span>Lembrar credenciais no dispositivo</span>
+              </label>
+            </div>
+
+            <button type="submit" id="btnLoginSubmit" class="btn-primary-gradient focusable">
+              <span>⇥</span>
+              <span>Entrar no 3A Stream</span>
+            </button>
+          </form>
+
+          <!-- ABA 2: XTREAM CODES API DIRETO (IDÊNTICO AO PRINT DE REFERÊNCIA) -->
+          <form id="xtreamDirectForm" class="login-form hidden" onsubmit="handleDirectXtreamSubmit(event)">
+            <div class="input-group">
+              <label for="directXtreamHost">SERVIDOR / URL (DNS)</label>
+              <div class="input-with-icon">
+                <span class="input-icon">🌐</span>
+                <input type="text" id="directXtreamHost" class="focusable" placeholder="http://servidor.net:80" value="http://sev3u.sbs:80" required />
+              </div>
+            </div>
+
+            <div class="input-group">
+              <label for="directXtreamUser">USUÁRIO</label>
+              <div class="input-with-icon">
+                <span class="input-icon">👤</span>
+                <input type="text" id="directXtreamUser" class="focusable" placeholder="Seu usuário Xtream" value="371047218" required />
+              </div>
+            </div>
+
+            <div class="input-group">
+              <label for="directXtreamPass">SENHA</label>
+              <div class="input-with-icon">
+                <span class="input-icon">🔒</span>
+                <input type="password" id="directXtreamPass" class="focusable" placeholder="••••••••" value="357753734" required />
+              </div>
+            </div>
+
+            <div class="auth-checkbox-group">
+              <label class="auth-checkbox-label">
+                <input type="checkbox" id="chkXtreamCorsProxy" checked />
+                <span>Usar Proxy CORS (Necessário se o servidor IPTV for HTTP direto)</span>
+              </label>
+              <label class="auth-checkbox-label">
+                <input type="checkbox" id="chkXtreamRemember" checked />
+                <span>Lembrar credenciais no dispositivo</span>
+              </label>
+            </div>
+
+            <button type="submit" id="btnDirectXtreamSubmit" class="btn-primary-gradient focusable">
+              <span>⇥</span>
+              <span>Entrar no 3A Stream</span>
+            </button>
+          </form>
+
+          <!-- ABA 3: LINK M3U / M3U8 DIRETO -->
+          <form id="m3uDirectForm" class="login-form hidden" onsubmit="handleDirectM3uSubmit(event)">
+            <div class="input-group">
+              <label for="directM3uUrl">LINK DA LISTA M3U / M3U8</label>
+              <div class="input-with-icon">
+                <span class="input-icon">🔗</span>
+                <input type="url" id="directM3uUrl" class="focusable" placeholder="http://servidor.sbs:80/get.php?username=...&password=..." value="http://sev3u.sbs:80/get.php?username=371047218&password=357753734&type=m3u_plus&output=mpegts" required />
+              </div>
+              <small class="input-helper">Converte automaticamente links get.php para Xtream API (TV, Filmes e Séries completos).</small>
+            </div>
+
+            <div class="auth-checkbox-group">
+              <label class="auth-checkbox-label">
+                <input type="checkbox" id="chkM3uCorsProxy" checked />
+                <span>Usar Proxy CORS (Recomendado para listas M3U externas)</span>
+              </label>
+            </div>
+
+            <button type="submit" id="btnDirectM3uSubmit" class="btn-primary-gradient focusable">
+              <span>☁️</span>
+              <span>Carregar Lista M3U no 3A Stream</span>
+            </button>
+          </form>
+
+          <!-- ABA 4: DEMONSTRAÇÃO IMEDIATA -->
+          <div id="demoDirectPanel" class="login-form hidden">
+            <div class="demo-info-card">
+              <div class="demo-info-title">✨ Teste Imediato Sem Conta Externa</div>
+              <p>Experimente o 3A Stream agora com canais demonstrativos, transmissões ao vivo e catálogo VOD/Séries de teste.</p>
+            </div>
+            <button type="button" class="btn-emerald-gradient focusable" onclick="startInstantDemoSession()">
+              <span>🚀</span>
+              <span>Iniciar Sessão Demonstração</span>
+            </button>
+          </div>
+
+          <!-- RODAPÉ DE SEGURANÇA E ENDEREÇO MAC -->
+          <div class="login-footer-notice">
+            <span class="shield-icon">🛡️</span>
+            <div class="notice-text">
+              <div>Navegadores bloqueiam streams sem cabeçalho CORS. Com o <strong>Proxy 3A Ativo</strong>, canais <code>http://</code> e áudios 5.1 rodam com 100% de compatibilidade.</div>
+              <div class="mac-line">endereço MAC: <strong id="loginMacDisplay">61:F3:CF:92:93:B1</strong> • <span class="status-online-dot">● Servidor 3A Online</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =================================================================
+           2. TELA INICIAL (HOME DASHBOARD - POLIDA COM NOVA LOGOMARCA 3A STREAM)
+           ================================================================= -->
+      <section id="screenHome" class="app-screen">
+        <div class="xcloud-home-wrapper">
+
+          <!-- TOPO: LOGO MODERNA 3A STREAM -->
+          <div class="xcloud-top-logo">
+            <div class="xcloud-emblem">
+              <img src="logo-3a-stream.jpg" alt="3A Stream" class="home-brand-logo-img" />
+              <div class="home-brand-titles">
+                <span class="xcloud-logo-caption">3A <span class="text-accent-stream">STREAM</span></span>
+                <span class="home-brand-sub">ULTRA HD IPTV & CINEMA</span>
+              </div>
+            </div>
+            <div class="home-user-pill" id="homeUserBadge">
+              👤 <span id="homeClientName">Cliente VIP</span> • <span id="homeClock">20:00</span>
+            </div>
+          </div>
+
+          <!-- GRADE PRINCIPAL (TV AO VIVO + 4 CARDS CENTRAIS + 3 BOTÕES DIREITA) -->
+          <div class="xcloud-main-grid">
+
+            <!-- COLUNA ESQUERDA: TV AO VIVO (GRANDE) -->
+            <button type="button" class="xcard xcard-live focusable" onclick="openCatalogSection('live')">
+              <div class="xcard-icon-large">
+                <!-- Ícone Smart TV Moderna sem controle remoto -->
+                <svg viewBox="0 0 72 64" width="88" height="76" fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="6" y="8" width="60" height="40" rx="5" />
+                  <rect x="10" y="12" width="52" height="32" rx="2.5" stroke="rgba(56,189,248,0.65)" stroke-width="1.8" />
+                  <circle cx="36" cy="28" r="9" fill="rgba(6,182,212,0.28)" stroke="#ffffff" stroke-width="2.4" />
+                  <polygon points="34,24 41,28 34,32" fill="#ffffff" stroke="none" />
+                  <line x1="22" y1="55" x2="50" y2="55" />
+                  <line x1="36" y1="48" x2="36" y2="55" />
+                </svg>
+              </div>
+              <span class="xcard-title-large" data-i18n="live_tv">TV ao Vivo</span>
+            </button>
+
+            <!-- COLUNA CENTRAL: 2x2 (FILMES, SÉRIES, FUTEBOL, PLAYLISTS) -->
+            <div class="xcloud-center-grid">
+
+              <!-- FILMES -->
+              <button type="button" class="xcard xcard-square focusable" onclick="openCatalogSection('vod')">
+                <div class="xcard-icon-med">
+                  <svg viewBox="0 0 64 64" width="54" height="54" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                    <!-- Pipoca + Copo e Ingresso -->
+                    <path d="M16 26h20l-2 28H18L16 26z" />
+                    <line x1="22" y1="26" x2="22" y2="54" />
+                    <line x1="30" y1="26" x2="30" y2="54" />
+                    <path d="M16 26c-2-5 2-9 6-8 2-4 8-4 10 0 4-1 8 3 4 8" />
+                    <rect x="38" y="30" width="12" height="24" rx="2" />
+                    <path d="M44 30V20l5-4" />
+                    <line x1="38" y1="36" x2="50" y2="36" />
+                  </svg>
+                </div>
+                <span class="xcard-label" data-i18n="movies">Filmes</span>
+              </button>
+
+              <!-- SÉRIES -->
+              <button type="button" class="xcard xcard-square focusable" onclick="openCatalogSection('series')">
+                <div class="xcard-icon-med">
+                  <svg viewBox="0 0 64 64" width="54" height="54" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                    <!-- Claquete + Rolo de Filme com destaque Ciano/Roxo -->
+                    <rect x="12" y="26" width="32" height="26" rx="3" />
+                    <path d="M12 22l30-8 2 7-30 8z" />
+                    <circle cx="44" cy="42" r="10" fill="#7c3aed" stroke="#ffffff" stroke-width="2.4" />
+                    <circle cx="44" cy="42" r="2.5" fill="#38bdf8" />
+                  </svg>
+                </div>
+                <span class="xcard-label" data-i18n="series">Séries</span>
+              </button>
+
+              <!-- FUTEBOL -->
+              <button type="button" class="xcard xcard-square focusable" onclick="openCatalogSection('soccer')">
+                <div class="xcard-icon-med">
+                  <svg viewBox="0 0 64 64" width="54" height="54" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="32" cy="32" r="20" />
+                    <polygon points="32,23 40,29 37,38 27,38 24,29" fill="rgba(56,189,248,0.25)" />
+                    <line x1="32" y1="12" x2="32" y2="23" />
+                    <line x1="50" y1="25" x2="40" y2="29" />
+                    <line x1="44" y1="48" x2="37" y2="38" />
+                    <line x1="20" y1="48" x2="27" y2="38" />
+                    <line x1="14" y1="25" x2="24" y2="29" />
+                  </svg>
+                </div>
+                <span class="xcard-label" data-i18n="soccer">Futebol</span>
+              </button>
+
+              <!-- PLAYLISTS -->
+              <button type="button" class="xcard xcard-square focusable" onclick="openCustomPlaylistModal()">
+                <div class="xcard-icon-med">
+                  <svg viewBox="0 0 64 64" width="54" height="54" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="12" y="16" width="28" height="10" rx="2" />
+                    <rect x="12" y="30" width="28" height="10" rx="2" />
+                    <rect x="12" y="44" width="28" height="10" rx="2" />
+                    <circle cx="44" cy="24" r="9" fill="#0891b2" stroke="#ffffff" stroke-width="2.2" />
+                    <ellipse cx="44" cy="24" rx="4" ry="9" />
+                    <line x1="35" y1="24" x2="53" y2="24" />
+                  </svg>
+                </div>
+                <span class="xcard-label" data-i18n="playlists">Playlits</span>
+              </button>
+
+            </div>
+
+            <!-- COLUNA DIREITA: 3 BOTÕES EMPILHADOS (CONFIGURAÇÕES, RECARREGAR, SAIR) -->
+            <div class="xcloud-right-stack">
+
+              <button type="button" class="xcard xcard-wide focusable" onclick="navigateToScreen('screenSettings')">
+                <span class="xcard-wide-icon">
+                  <svg viewBox="0 0 36 36" width="32" height="32" fill="none" stroke="#ffffff" stroke-width="2.2">
+                    <circle cx="15" cy="15" r="5" />
+                    <path d="M15 6v3M15 21v3M6 15h3M21 15h3M8.5 8.5l2 2M19.5 19.5l2 2M21.5 8.5l-2 2M10.5 19.5l-2 2" />
+                  </svg>
+                </span>
+                <span class="xcard-wide-text" data-i18n="settings">Configurações</span>
+              </button>
+
+              <button type="button" class="xcard xcard-wide focusable" onclick="reloadPlaylistCatalog()">
+                <span class="xcard-wide-icon">
+                  <svg viewBox="0 0 36 36" width="32" height="32" fill="none" stroke="#ffffff" stroke-width="2.2">
+                    <path d="M8 18a10 10 0 1 1 3 7.2" />
+                    <polyline points="8,12 8,19 15,19" />
+                    <rect x="14" y="13" width="8" height="10" rx="1" />
+                  </svg>
+                </span>
+                <span class="xcard-wide-text" data-i18n="reload">recarregar</span>
+              </button>
+
+              <button type="button" class="xcard xcard-wide focusable" onclick="logoutPlayer()">
+                <span class="xcard-wide-icon">
+                  <svg viewBox="0 0 36 36" width="32" height="32" fill="none" stroke="#ffffff" stroke-width="2.2">
+                    <rect x="8" y="6" width="14" height="24" rx="2" />
+                    <line x1="18" y1="18" x2="30" y2="18" />
+                    <polyline points="25,13 30,18 25,23" />
+                  </svg>
+                </span>
+                <span class="xcard-wide-text" data-i18n="exit">Sair</span>
+              </button>
+
+            </div>
+
+          </div>
+
+          <!-- RODAPÉ: DATA DE VENCIMENTO DA ASSINATURA (IDÊNTICO AO PRINT 1) -->
+          <div class="xcloud-bottom-date" id="homeExpirationDate">
+            15/06/2026
+          </div>
+
+        </div>
+      </section>
+
+      <!-- =================================================================
+           3. TELA DE CONFIGURAÇÕES (FIEL AO PRINT 2 - 17 FUNÇÕES + MAC)
+           ================================================================= -->
+      <section id="screenSettings" class="app-screen">
+        <div class="settings-wrapper">
+
+          <div class="settings-header">
+            <div class="fixed-nav-group">
+              <button type="button" class="settings-back-btn focusable" onclick="navigateToScreen('screenHome')" aria-label="Voltar" title="Voltar">
+                ↩
+              </button>
+              <button type="button" class="settings-home-btn focusable" onclick="navigateToScreen('screenHome')" aria-label="Home" title="Ir para Tela Inicial">
+                🏠 Início
+              </button>
+            </div>
+            <h2 class="settings-title" data-i18n="settings">Configurações</h2>
+            <div style="width: 42px;"></div>
+          </div>
+
+          <!-- GRADE DE 4 COLUNAS COM OS 17 BOTÕES EXATOS DO PRINT 2 -->
+          <div class="settings-grid">
+
+            <!-- 1. Add Conta -->
+            <button type="button" class="scard focusable" onclick="openSettingAction('add_account')">
+              <span class="scard-icon">🪪</span>
+              <span class="scard-text">Add Conta</span>
+            </button>
+
+            <!-- 2. Controle dos Pais -->
+            <button type="button" class="scard focusable" onclick="openSettingAction('parental_control')">
+              <span class="scard-icon">🔒</span>
+              <span class="scard-text">Controle dos Pais</span>
+            </button>
+
+            <!-- 3. Playlits -->
+            <button type="button" class="scard focusable" onclick="openCustomPlaylistModal()">
+              <span class="scard-icon">📋</span>
+              <span class="scard-text">Playlits</span>
+            </button>
+
+            <!-- 4. mudar idioma -->
+            <button type="button" class="scard focusable" onclick="openSettingAction('language')">
+              <span class="scard-icon">🈯</span>
+              <span class="scard-text">mudar idioma</span>
+            </button>
+
+            <!-- 5. Alterar layout -->
+            <button type="button" class="scard focusable" onclick="openSettingAction('layout')">
+              <span class="scard-icon">⊞</span>
+              <span class="scard-text">Alterar layout</span>
+            </button>
+
+            <!-- 6. Ocultar Categorias ao Vivo -->
+            <button type="button" class="scard focusable" onclick="openHideCategoriesModal('live')">
+              <span class="scard-icon">🙈</span>
+              <span class="scard-text">Ocultar Categorias ao Vivo</span>
+            </button>
+
+            <!-- 7. Ocultar Categorias Vod -->
+            <button type="button" class="scard focusable" onclick="openHideCategoriesModal('vod')">
+              <span class="scard-icon">🙈</span>
+              <span class="scard-text">Ocultar Categorias Vod</span>
+            </button>
+
+            <!-- 8. Ocultar Categorias Series -->
+            <button type="button" class="scard focusable" onclick="openHideCategoriesModal('series')">
+              <span class="scard-icon">🙈</span>
+              <span class="scard-text">Ocultar Categorias Series</span>
+            </button>
+
+            <!-- 9. Limpar histórico de filmes -->
+            <button type="button" class="scard focusable" onclick="openSettingAction('clear_movie_history')">
+              <span class="scard-icon">🗑️</span>
+              <span class="scard-text">Limpar histórico de filmes</span>
+            </button>
+
+            <!-- 10. Não há filmes vistos recentemente -->
+            <button type="button" class="scard focusable" onclick="openSettingAction('clear_recent')">
+              <span class="scard-icon">🗑️</span>
+              <span class="scard-text" id="recentMoviesLabel">Não há filmes vistos recentemente.</span>
+            </button>
+
+            <!-- 11. Live Stream Format -->
+            <button type="button" class="scard focusable" onclick="openSettingAction('stream_format')">
+              <span class="scard-icon">📺</span>
+              <span class="scard-text">Live Stream Format (<strong id="lblStreamFormat">HLS</strong>)</span>
+            </button>
+
+            <!-- 12. jogador externo -->
+            <button type="button" class="scard focusable" onclick="openSettingAction('external_player')">
+              <span class="scard-icon">▶️</span>
+              <span class="scard-text">jogador externo</span>
+            </button>
+
+            <!-- 13. automática -->
+            <button type="button" class="scard focusable" onclick="openSettingAction('auto_start')">
+              <span class="scard-icon">🔄</span>
+              <span class="scard-text">automática (<strong id="lblAutoStart">ON</strong>)</span>
+            </button>
+
+            <!-- 14. Formato da hora -->
+            <button type="button" class="scard focusable" onclick="openSettingAction('time_format')">
+              <span class="scard-icon">🕒</span>
+              <span class="scard-text">Formato da hora (<strong id="lblTimeFormat">24h</strong>)</span>
+            </button>
+
+            <!-- 15. Configurações de legenda -->
+            <button type="button" class="scard focusable" onclick="openSettingAction('subtitles')">
+              <span class="scard-icon">💬</span>
+              <span class="scard-text">Configurações de legenda</span>
+            </button>
+
+            <!-- 16. Select Device Type -->
+            <button type="button" class="scard focusable" onclick="openSettingAction('device_type')">
+              <span class="scard-icon">🖥️</span>
+              <span class="scard-text">Select Device Type (<strong id="lblDeviceType">TV</strong>)</span>
+            </button>
+
+            <!-- 17. atualize agora -->
+            <button type="button" class="scard focusable" onclick="reloadPlaylistCatalog(true)">
+              <span class="scard-icon">📥</span>
+              <span class="scard-text">atualize agora</span>
+            </button>
+
+          </div>
+
+          <div class="settings-footer-mac">
+            endereço MAC: <span id="settingsMacDisplay">61:F3:CF:92:93:B1</span>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- =================================================================
+           4. TELA DE CATÁLOGO E REPRODUÇÃO (TV AO VIVO, FUTEBOL, FILMES, SÉRIES)
+           ================================================================= -->
+      <section id="screenCatalog" class="app-screen">
+        <div class="catalog-layout">
+
+          <!-- TOPBAR DO CATÁLOGO COM BOTÕES VOLTAR E HOME FIXADOS -->
+          <div class="catalog-topbar">
+            <div class="fixed-nav-group">
+              <button type="button" class="settings-back-btn focusable" onclick="closeCatalogSection()" title="Voltar">↩</button>
+              <button type="button" class="settings-home-btn focusable" onclick="closeCatalogSection()" title="Ir para Home">🏠 Home</button>
+            </div>
+            <div class="catalog-heading">
+              <span class="catalog-badge-3a">3A STREAM</span>
+              <h2 id="catalogSectionTitle">TV ao Vivo</h2>
+            </div>
+            <div class="catalog-search-box">
+              <input type="text" id="catalogSearchInput" class="focusable" placeholder="🔍 Buscar canal, jogo ou filme..." oninput="renderCatalogItems()" />
+            </div>
+          </div>
+
+          <div class="catalog-body">
+            <!-- SIDEBAR DE CATEGORIAS -->
+            <aside class="catalog-categories" id="catalogCategoriesList"></aside>
+
+            <!-- LISTA CENTRAL DE CANAIS / FILMES -->
+            <div class="catalog-items-panel" id="catalogItemsContainer"></div>
+
+            <!-- PLAYER INTEGRADO HLS + DETALHES EPG (PARA TV AO VIVO / FUTEBOL) -->
+            <div class="catalog-player-panel" id="catalogPlayerPanel">
+              <div class="video-box">
+                <video id="iptvVideoPlayer" controls controlsList="nofullscreen" playsinline crossorigin="anonymous"></video>
+                <div id="videoIdlePlaceholder" class="video-idle-placeholder">
+                  <img src="logo-3a-stream.jpg" alt="3A Stream" class="idle-logo" />
+                  <span>Selecione um canal ao lado para assistir ao vivo</span>
+                </div>
+                <div id="videoSubtitleOverlay" class="video-subtitle-overlay hidden">Legenda 3A Stream Ativa</div>
+              </div>
+              <div class="player-epg-info">
+                <div class="epg-header-row">
+                  <h3 id="nowPlayingTitle">Selecione um canal ao lado</h3>
+                  <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                    <button type="button" class="btn-audio-boost focusable" id="btnCatalogAudioBoost" onclick="cycleAudioBoostMode()" title="Normalizador de Voz 5.1 Surround e Amplificador de Volume">
+                      🔊 Voz 5.1 (180%)
+                    </button>
+                    <button type="button" class="btn-fullscreen focusable" onclick="openCurrentLiveInCinema()">⛶ Tela Cheia 100%</button>
+                  </div>
+                </div>
+                <p id="nowPlayingEpgNow" class="epg-now">🟢 Agora: Aguardando seleção de canal...</p>
+                <p id="nowPlayingEpgNext" class="epg-next">⏭️ A Seguir: --</p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- =================================================================
+           5. TELA DE DETALHES DE SÉRIE / FILME (FIEL AO PRINT DO IPTV EXPERT)
+           ================================================================= -->
+      <section id="screenMediaDetail" class="app-screen">
+        <div class="media-detail-page" id="mediaDetailScrollContainer">
+
+          <!-- HERO BACKDROP COM GRADIENTE -->
+          <div class="media-hero" id="mediaHeroBanner">
+            <div class="media-hero-overlay"></div>
+
+            <!-- TOPO DO HERO FIXADO: VOLTAR + HOME + NOTA + ANO + FAVORITO -->
+            <div class="media-hero-topbar">
+              <div class="media-top-left">
+                <button type="button" class="media-circle-btn focusable" onclick="backFromMediaDetail()" title="Voltar uma página">←</button>
+                <button type="button" class="settings-home-btn focusable" onclick="closeCatalogSection()" title="Voltar para Home">🏠 Home</button>
+                <span class="media-pill" id="detailRatingPill">7.0 ★</span>
+                <span class="media-pill" id="detailYearPill">2026</span>
+                <span class="media-pill media-pill-genre" id="detailGenrePill">Drama, Sci-Fi</span>
+              </div>
+              <div class="media-top-right">
+                <button type="button" class="media-icon-btn focusable" onclick="showToast('📡 Pronto para transmitir para Smart TV')" title="Transmitir">📺</button>
+                <button type="button" class="media-icon-btn focusable" onclick="showToast('⭐ Adicionado aos Favoritos!')" title="Favoritar">☆</button>
+              </div>
+            </div>
+
+            <!-- CENTRO DO HERO: TÍTULO + BOTÃO ASSISTIR + SINOPSE -->
+            <div class="media-hero-center">
+              <h1 class="media-hero-title" id="detailTitle">Lanternas</h1>
+              <button type="button" class="media-watch-btn focusable" id="btnDetailPrimaryWatch">
+                ▶ Assistir S01E01 - Episodio 1
+              </button>
+              <p class="media-hero-plot" id="detailPlot">
+                Dois policiais intergalácticos, o recruta novato John Stewart e o lendário Lanterna Verde Hal Jordan, se veem envolvidos em um mistério sombrio que se passa na Terra enquanto investigam um assassinato no coração dos Estados Unidos.
+              </p>
+            </div>
+          </div>
+
+          <!-- ABAS: ELENCO | RECOMENDAÇÕES | TEMPORADA 1 | TEMPORADA 2... -->
+          <div class="media-tabs-container">
+            <div class="media-tabs-bar" id="detailTabsBar"></div>
+
+            <!-- CONTEÚDO DA ABA ATIVA (CARDS DE EPISÓDIOS COM CAPA 16:9, ELENCO OU RECOMENDAÇÕES) -->
+            <div class="media-tab-panel" id="detailTabContent"></div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- =================================================================
+           6. PLAYER DE CINEMA DEDICADO (TELA CHEIA 100% + BOTÃO VOLTAR SUPERIOR ESQUERDO AO TOCAR NA TELA)
+           ================================================================= -->
+      <section id="screenCinemaPlayer" class="app-screen">
+        <div class="cinema-player-wrap" id="cinemaPlayerWrap" onclick="handleCinemaStageTap(event)">
+
+          <!-- BARRA SUPERIOR FLUTUANTE COM BOTÃO DE VOLTAR NO CANTO SUPERIOR ESQUERDO (VISÍVEL APENAS AO ATIVAR A TELA COM TOQUE) -->
+          <div class="cinema-topbar" id="cinemaTopbar">
+            <div class="cinema-top-left">
+              <button type="button" class="cinema-back-top-left-btn focusable" onclick="closeCinemaPlayer()" title="Voltar uma página">
+                <span class="cinema-back-icon">←</span>
+                <span class="cinema-back-text">Voltar</span>
+              </button>
+              <div class="cinema-titles">
+                <h3 id="cinemaNowTitle">Lanternas — S01E01 - Episodio 1</h3>
+                <span id="cinemaNowSub">Temporada 1 • Episódio 1</span>
+              </div>
+            </div>
+            <div class="cinema-top-actions">
+              <button type="button" class="cinema-ctrl-btn cinema-ctrl-audio focusable" id="btnCinemaAudioBoost" onclick="cycleAudioBoostMode()" title="Corrige áudio baixo 5.1 Surround realçando vozes e normalizando volume">
+                🔊 Voz 5.1 (180%)
+              </button>
+              <button type="button" class="cinema-ctrl-btn focusable" id="btnCinemaAspectRatio" onclick="cycleVideoAspectRatio()" title="Alternar formato de preenchimento da tela">
+                📐 Tela: Preencher 100%
+              </button>
+              <button type="button" class="cinema-ctrl-btn focusable" id="btnPrevEpisode" onclick="skipSeriesEpisode(-1)">
+                ⏮ Anterior
+              </button>
+              <button type="button" class="cinema-ctrl-btn cinema-ctrl-next focusable" id="btnNextEpisode" onclick="skipSeriesEpisode(1)">
+                ⏭ Pular Ep.
+              </button>
+              <button type="button" class="cinema-ctrl-btn focusable" id="btnToggleEpDrawer" onclick="toggleCinemaEpisodeDrawer()">
+                📋 Episódios
+              </button>
+            </div>
+          </div>
+
+          <!-- ÁREA DO VÍDEO 100% TELA CHEIA + GAVETA LATERAL DE EPISÓDIOS -->
+          <div class="cinema-stage">
+            <video id="cinemaVideoElement" class="video-fit-fill" controls controlsList="nofullscreen" playsinline crossorigin="anonymous"></video>
+
+            <!-- GAVETA LATERAL RÁPIDA DE EPISÓDIOS DENTRO DO PLAYER -->
+            <aside id="cinemaEpisodeDrawer" class="cinema-ep-drawer hidden">
+              <div class="drawer-header">
+                <h4>Todos os Episódios</h4>
+                <button type="button" class="dialog-close-btn" onclick="toggleCinemaEpisodeDrawer()">✕</button>
+              </div>
+              <div id="cinemaDrawerList" class="drawer-ep-list"></div>
+            </aside>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- TOAST DE FEEDBACK -->
+      <div id="appToast" class="app-toast hidden"></div>
+
+    </div>
+
+  </main>
+
+  <!-- MODAL GENÉRICO NATIVO (<dialog closedby="any"> conforme padrão web moderno) -->
+  <dialog id="appModalDialog" closedby="any" aria-labelledby="modalDialogTitle" class="app-dialog">
+    <div class="dialog-inner">
+      <div class="dialog-header">
+        <h3 id="modalDialogTitle">Configuração</h3>
+        <button type="button" class="dialog-close-btn" onclick="closeAppModal()">✕</button>
+      </div>
+      <div id="modalDialogBody" class="dialog-body"></div>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "appId": "com.tresastream.iptv",
+  "appName": "3A Stream",
+  "webDir": "public/player",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true,
+    "allowNavigation": ["*"]
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  }
+}

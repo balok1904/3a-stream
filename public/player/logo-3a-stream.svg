@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#131829" />
+      <stop offset="100%" stop-color="#090b12" />
+    </linearGradient>
+    <linearGradient id="neon3A" x1="15" y1="25" x2="105" y2="95" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8b5cf6" />
+      <stop offset="45%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+    <linearGradient id="playGlow" x1="55" y1="40" x2="100" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3.5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <rect x="4" y="4" width="112" height="112" rx="28" fill="url(#bgGrad)" stroke="rgba(99,102,241,0.35)" stroke-width="2.5" />
+  <!-- Stylized 3 + A Monogram with Integrated Play Triangle -->
+  <path d="M24 34 H54 L38 52 C48 53 54 60 54 70 C54 83 43 90 29 90 C21 90 16 86 14 82" stroke="url(#neon3A)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" filter="url(#softGlow)" />
+  <path d="M48 90 L70 32 L94 90" stroke="url(#neon3A)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" filter="url(#softGlow)" />
+  <polygon points="65,50 96,67 65,83" fill="url(#playGlow)" filter="url(#softGlow)" />
+</svg>

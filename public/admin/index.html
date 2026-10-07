@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3A Stream - Painel de Controle (Clientes, Mensalidades & Listas IPTV)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #090b10;
+      --card: #121622;
+      --border: #1e2638;
+      --green: #4f46e5;
+      --green-light: #10b981;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Plus Jakarta Sans', 'Segoe UI', Roboto, Helvetica, sans-serif;
+      background: radial-gradient(ellipse 80% 50% at 50% -15%, rgba(99, 102, 241, 0.2), transparent), var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      background: rgba(18, 22, 34, 0.85);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .brand-logo-img {
+      width: 46px;
+      height: 46px;
+      border-radius: 12px;
+      object-fit: cover;
+      box-shadow: 0 6px 18px rgba(99, 102, 241, 0.4);
+      border: 1px solid rgba(129, 140, 248, 0.4);
+    }
+    .brand h1 { font-size: 19px; font-weight: 800; letter-spacing: -0.3px; }
+    .brand p { font-size: 12px; color: var(--muted); }
+    .top-actions { display: flex; gap: 10px; align-items: center; }
+    .btn {
+      border: none;
+      padding: 9px 15px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.92; }
+      .btn-green { background: linear-gradient(135deg, #7c3aed 0%, #0284c7 52%, #06b6d4 100%); color: #fff; border: 1px solid rgba(103, 232, 249, 0.35); }
+      .btn-blue { background: linear-gradient(135deg, #4338ca 0%, #0284c7 100%); color: #fff; border: 1px solid rgba(56, 189, 248, 0.35); }
+      .btn-cyan { background: linear-gradient(135deg, #0284c7 0%, #06b6d4 100%); color: #fff; border: 1px solid rgba(103, 232, 249, 0.45); }
+      .btn-dark { background: #1f2937; color: #e5e7eb; border: 1px solid #374151; }
+      .btn-red { background: rgba(220,38,38,0.2); color: #f87171; border: 1px solid rgba(248,113,113,0.35); }
+      .btn-sm { padding: 6px 10px; font-size: 12px; border-radius: 6px; }
+
+      .container { max-width: 1340px; margin: 0 auto; padding: 24px 28px; }
+
+      /* KPIs */
+      .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+      .kpi-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 18px 20px;
+      }
+      .kpi-label { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+      .kpi-value { font-size: 26px; font-weight: 800; }
+      .kpi-sub { font-size: 11.5px; color: #38bdf8; margin-top: 4px; }
+
+      /* Tabela de Clientes */
+      .panel {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 24px;
+      }
+      .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      .panel-header h2 { font-size: 17px; }
+      .search-input {
+        background: #090b10;
+        border: 1px solid var(--border);
+        color: #fff;
+        padding: 8px 14px;
+        border-radius: 8px;
+        width: 280px;
+        font-size: 13px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th, td {
+        text-align: left;
+        padding: 12px 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+      .badge {
+        padding: 3px 9px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .badge-active { background: rgba(6, 182, 212, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); }
+      .badge-expired, .badge-blocked { background: rgba(220, 38, 38, 0.2); color: #f87171; }
+      .badge-soon { background: rgba(234, 179, 8, 0.2); color: #facc15; }
+      .actions-cell { display: flex; gap: 6px; flex-wrap: wrap; }
+
+      /* Modal Nativo <dialog closedby="any"> */
+      dialog.admin-dialog {
+        margin: auto;
+        background: #12161f;
+        color: #fff;
+        border: 1px solid #2e3a52;
+        border-radius: 12px;
+        width: 94%;
+        max-width: 620px;
+        padding: 0;
+        box-shadow: 0 25px 60px rgba(0,0,0,0.85);
+      }
+      dialog.admin-dialog::backdrop {
+        background: rgba(0, 0, 0, 0.72);
+        backdrop-filter: blur(3px);
+      }
+      .modal-box { padding: 22px; }
+      .modal-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 12px;
+        margin-bottom: 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      .form-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .form-full { grid-column: 1 / -1; }
+      label { display: block; font-size: 12px; color: #d1d5db; margin-bottom: 4px; font-weight: 600; }
+      input, select {
+        width: 100%;
+        background: #090b10;
+        border: 1px solid #2a3446;
+        color: #fff;
+        padding: 9px 11px;
+        border-radius: 6px;
+        font-size: 13px;
+      }
+      .modal-footer {
+        margin-top: 18px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+      .toast {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: linear-gradient(135deg, #7c3aed 0%, #0284c7 52%, #06b6d4 100%);
+        color: #fff;
+        padding: 12px 18px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 700;
+        display: none;
+        z-index: 99;
+      }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <img src="logo-3a-stream.jpg" alt="3A Stream" class="brand-logo-img" />
+      <div>
+        <h1>3A Stream — Painel de Controle & Gestor IPTV</h1>
+        <p>Gerenciamento de Clientes, Mensalidades, Bloqueio Automático e Provisionamento Xtream API / M3U</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button type="button" class="btn btn-green" onclick="openClientModal()">➕ Novo Cliente / Assinatura</button>
+      <a href="/3A-Stream-Mobile.apk" download="3A-Stream-Mobile.apk" class="btn btn-cyan">📲 Baixar APK Mobile</a>
+      <a href="/player" class="btn btn-blue">🤖 Abrir App / Player 3A Stream</a>
+    </div>
+  </header>
+
+  <div class="container">
+
+    <!-- KPIs FINANCEIROS E OPERACIONAIS -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Total de Clientes Cadastrados</div>
+        <div class="kpi-value" id="kpiTotal">0</div>
+        <div class="kpi-sub">Base total no servidor local</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Assinaturas Ativas</div>
+        <div class="kpi-value" style="color:#4ade80;" id="kpiActive">0</div>
+        <div class="kpi-sub">Acesso liberado no app 3A Stream</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Vencendo nos Próximos 7 Dias</div>
+        <div class="kpi-value" style="color:#facc15;" id="kpiSoon">0</div>
+        <div class="kpi-sub">Enviar lembrete de renovação</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Vencidos / Bloqueados</div>
+        <div class="kpi-value" style="color:#f87171;" id="kpiBlocked">0</div>
+        <div class="kpi-sub">Bloqueados automaticamente no login</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Faturamento Mensal Ativo</div>
+        <div class="kpi-value" style="color:#38bdf8;" id="kpiRevenue">R$ 0,00</div>
+        <div class="kpi-sub">Receita recorrente estimada</div>
+      </div>
+    </div>
+
+    <!-- TABELA DE CLIENTES E PROVISIONAMENTO IPTV -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2>👥 Clientes, Credenciais do App & Listas IPTV Vinculadas</h2>
+        <input type="text" id="searchClientInput" class="search-input" placeholder="🔍 Buscar por nome, usuário ou MAC..." oninput="renderClientsTable()" />
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Cliente / WhatsApp</th>
+              <th>Login no App 3A</th>
+              <th>Endereço MAC</th>
+              <th>Fonte Lista IPTV</th>
+              <th>Plano / Mensalidade</th>
+              <th>Vencimento</th>
+              <th>Status</th>
+              <th>Ações Rápidas</th>
+            </tr>
+          </thead>
+          <tbody id="clientsTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- HISTÓRICO DE MENSALIDADES E GUIA DE APK ANDROID -->
+    <div style="display:grid;grid-template-columns: 1fr 1fr;gap:20px;">
+      <div class="panel">
+        <div class="panel-header">
+          <h2>💳 Últimas Mensalidades / Renovações</h2>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Cliente</th>
+              <th>Método</th>
+              <th>Valor</th>
+            </tr>
+          </thead>
+          <tbody id="paymentsTableBody"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>📦 Como Gerar o APK Android (3A Stream)</h2>
+        </div>
+        <p style="font-size:13px;color:#d1d5db;line-height:1.6;margin-bottom:10px;">
+          O projeto já está configurado com <strong>Capacitor Android</strong> (`com.tresastream.iptv`) apontando para o Player em <code>public/player</code> com suporte a listas HTTP/HTTPS (`cleartext: true`).
+        </p>
+        <ol style="font-size:12.5px;color:#9ca3af;line-height:1.7;padding-left:18px;">
+          <li>Para testar agora mesmo com Controle Remoto Virtual, clique em <strong>"Abrir App Android / Emulador 3A Stream"</strong> no topo.</li>
+          <li>Para compilar o instalador <code>.apk</code> no Android Studio, execute no terminal: <code>npm run android:init</code> e depois <code>npm run android:open</code>.</li>
+          <li>Quando o cliente instalar o APK, basta ele digitar o <strong>Usuário e Senha</strong> que você criou na tabela acima — a lista Xtream API ou M3U configurada por você será entregue automaticamente!</li>
+        </ol>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- MODAL CRIAR / EDITAR CLIENTE E CREDENCIAIS XTREAM / M3U -->
+  <dialog id="clientDialog" closedby="any" aria-labelledby="clientDialogTitle" class="admin-dialog">
+    <form class="modal-box" onsubmit="saveClientForm(event)">
+      <div class="modal-top">
+        <h3 id="clientDialogTitle">Cadastrar / Editar Cliente 3A Stream</h3>
+        <button type="button" class="btn btn-dark btn-sm" onclick="closeClientModal()">✕</button>
+      </div>
+
+      <input type="hidden" id="cliId" />
+
+      <div class="form-grid">
+        <div>
+          <label>Nome do Cliente *</label>
+          <input type="text" id="cliName" required placeholder="Ex: Marcos Oliveira" />
+        </div>
+        <div>
+          <label>WhatsApp / Telefone</label>
+          <input type="text" id="cliPhone" placeholder="(11) 99999-8888" />
+        </div>
+
+        <div>
+          <label>Usuário no App 3A Stream *</label>
+          <input type="text" id="cliUsername" required placeholder="Ex: marcos2026" />
+        </div>
+        <div>
+          <label>Senha no App 3A Stream *</label>
+          <input type="text" id="cliPassword" required placeholder="Ex: 123456" />
+        </div>
+
+        <div>
+          <label>Endereço MAC do Aparelho</label>
+          <input type="text" id="cliMac" placeholder="61:F3:CF:92:93:B1" value="61:F3:CF:92:93:B1" />
+        </div>
+        <div>
+          <label>PIN Controle dos Pais (4 dígitos)</label>
+          <input type="text" id="cliPin" maxlength="4" value="0000" />
+        </div>
+
+        <div>
+          <label>Plano</label>
+          <input type="text" id="cliPlan" value="Plano 3A Completo 4K" />
+        </div>
+        <div>
+          <label>Valor Mensalidade (R$)</label>
+          <input type="number" step="0.01" id="cliPrice" value="35.00" />
+        </div>
+
+        <div>
+          <label>Data de Vencimento *</label>
+          <input type="date" id="cliExpires" required />
+        </div>
+        <div>
+          <label>Status da Conta</label>
+          <select id="cliStatus">
+            <option value="active">🟢 Ativo (Acesso Liberado)</option>
+            <option value="blocked">🔴 Bloqueado (Suspenso)</option>
+          </select>
+        </div>
+
+        <div class="form-full" style="margin-top:6px;padding-top:10px;border-top:1px solid #1f2737;">
+          <label>Fonte da Lista IPTV Fornecida para este Cliente</label>
+          <select id="cliSourceType" onchange="toggleClientIptvFields()">
+            <option value="demo">⚡ Servidor 3A Stream Padrão (Catálogo Integrado HLS)</option>
+            <option value="xtream">🌐 Credenciais Xtream Codes API (URL DNS + User + Pass)</option>
+            <option value="m3u">📋 Link de Lista M3U / M3U8 Direto</option>
+          </select>
+        </div>
+
+        <div id="adminXtreamFields" class="form-full" style="display:none;grid-template-columns:1fr 1fr;gap:10px;">
+          <div class="form-full">
+            <label>URL do Servidor Xtream (DNS:Porta)</label>
+            <input type="text" id="cliXtreamUrl" placeholder="http://seu-servidor-iptv.com:8080" />
+          </div>
+          <div>
+            <label>Usuário Xtream (da Lista)</label>
+            <input type="text" id="cliXtreamUser" placeholder="usuario_xtream" />
+          </div>
+          <div>
+            <label>Senha Xtream (da Lista)</label>
+            <input type="text" id="cliXtreamPass" placeholder="senha_xtream" />
+          </div>
+        </div>
+
+        <div id="adminM3uFields" class="form-full" style="display:none;">
+          <label>URL Completa da Lista M3U / M3U8</label>
+          <input type="text" id="cliM3uUrl" placeholder="http://servidor.com/get.php?username=...&type=m3u_plus" />
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-dark" onclick="closeClientModal()">Cancelar</button>
+        <button type="submit" class="btn btn-green">💾 Salvar Cliente</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="adminToast" class="toast"></div>
+
+  <script src="admin.js"></script>
+</body>
+</html>

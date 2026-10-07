@@ -1,0 +1,22 @@
+{
+  "name": "3a-stream-ecosystem",
+  "version": "1.0.0",
+  "description": "3A Stream - IPTV Player (Xtream API & M3U), Ambiente de Testes Android/TV Box e Painel de Controle de Clientes e Mensalidades",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "android:init": "npx cap add android",
+    "android:sync": "npx cap sync android",
+    "android:open": "npx cap open android"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/cli": "^6.2.0",
+    "@capacitor/core": "^6.2.0"
+  }
+}
