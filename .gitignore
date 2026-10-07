@@ -4,5 +4,6 @@ android/build/
 android/app/build/
 android/capacitor-cordova-android-plugins/build/
 *.apk
+!/3A-Stream-Mobile.apk
 .DS_Store
 Thumbs.db
