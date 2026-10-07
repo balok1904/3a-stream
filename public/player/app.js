@@ -42,7 +42,7 @@ const IS_NATIVE_APK = Boolean(
   (window.location.hostname === 'localhost' && window.location.port !== '3000')
 );
 
-const DEFAULT_CLOUD_BACKEND = 'https://3a-stream.onrender.com';
+const DEFAULT_CLOUD_BACKEND = 'https://threea-stream.onrender.com';
 const DEFAULT_LAN_BACKEND = localStorage.getItem('3a_backend_url') || DEFAULT_CLOUD_BACKEND;
 
 async function apiFetch(path, options = {}) {
@@ -51,8 +51,8 @@ async function apiFetch(path, options = {}) {
   }
   const savedUrl = localStorage.getItem('3a_backend_url');
   const candidateUrls = savedUrl
-    ? [savedUrl.replace(/\/+$/, ''), 'http://192.168.0.12:3000']
-    : [DEFAULT_CLOUD_BACKEND, 'http://192.168.0.12:3000'];
+    ? [savedUrl.replace(/\/+$/, ''), 'https://threea-stream.onrender.com', 'http://192.168.0.12:3000']
+    : ['https://threea-stream.onrender.com', 'https://app-3a-stream.onrender.com', 'https://3a-stream.onrender.com', 'http://192.168.0.12:3000'];
 
   let lastErr = null;
   for (const baseUrl of candidateUrls) {
