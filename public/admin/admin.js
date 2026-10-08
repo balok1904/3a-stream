@@ -140,6 +140,17 @@ async function loadAdminOverview() {
   }
 }
 
+function formatAdminDateBr(rawDate) {
+  if (!rawDate) return '--/--/----';
+  const clean = String(rawDate).trim().split('T')[0];
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(clean)) return clean;
+  const parts = clean.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return clean;
+}
+
 function renderClientsTable() {
   const tbody = document.getElementById('clientsTableBody');
   const q = (document.getElementById('searchClientInput').value || '').toLowerCase().trim();
@@ -149,8 +160,7 @@ function renderClientsTable() {
     if (!q) return true;
     return (
       (c.name || '').toLowerCase().includes(q) ||
-      (c.username || '').toLowerCase().includes(q) ||
-      (c.macAddress || '').toLowerCase().includes(q)
+      (c.username || '').toLowerCase().includes(q)
     );
   });
 
@@ -182,14 +192,13 @@ function renderClientsTable() {
         <div>👤 <strong>${c.username}</strong></div>
         <div style="font-size:11.5px;color:#9ca3af;">🔑 Senha: <code>${c.password}</code></div>
       </td>
-      <td><code>${c.macAddress || '61:F3:CF:92:93:B1'}</code></td>
       <td>${sourceBadge}</td>
       <td>
         <div>${c.planName}</div>
         <div style="font-size:12px;color:#4ade80;font-weight:700;">R$ ${Number(c.monthlyPrice || 0).toFixed(2).replace('.', ',')}/mês</div>
       </td>
       <td><strong>${c.expiresAtFormatted}</strong></td>
-      <td>${statusBadge}</td>
+      <td style="white-space:nowrap;">${statusBadge}</td>
       <td>
         <div class="actions-cell">
           <a href="/player?user=${encodeURIComponent(c.username)}&pass=${encodeURIComponent(c.password)}" class="btn btn-blue btn-sm" title="Abrir e testar no Player Android">▶️ Testar App</a>
@@ -208,13 +217,25 @@ function renderClientsTable() {
 function renderPaymentsTable() {
   const tbody = document.getElementById('paymentsTableBody');
   tbody.innerHTML = '';
-  (adminState.payments || []).slice(0, 8).forEach(p => {
+  const list = adminState.payments || [];
+  if (list.length === 0) {
     const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="5" style="text-align:center;color:#94a3b8;padding:18px;">Nenhum registro de mensalidade no momento.</td>`;
+    tbody.appendChild(tr);
+    return;
+  }
+
+  list.slice(0, 20).forEach(p => {
+    const tr = document.createElement('tr');
+    const dateBr = p.dateFormatted || formatAdminDateBr(p.date);
     tr.innerHTML = `
-      <td>${p.date}</td>
+      <td><strong>${dateBr}</strong></td>
       <td><strong>${p.clientName}</strong></td>
       <td>${p.method}</td>
       <td style="color:#4ade80;font-weight:700;">R$ ${Number(p.amount || 0).toFixed(2).replace('.', ',')}</td>
+      <td>
+        <button type="button" class="btn btn-red btn-sm" onclick="deletePayment('${p.id}')" title="Remover este registro">🗑️</button>
+      </td>
     `;
     tbody.appendChild(tr);
   });
@@ -330,6 +351,15 @@ async function deleteClient(id) {
   loadAdminOverview();
 }
 
+async function deletePayment(id) {
+  const res = await adminFetch(`/api/admin/payments/${id}`, { method: 'DELETE' });
+  const data = await res.json();
+  if (data && data.ok) {
+    showAdminToast('🗑️ Registro de mensalidade removido.');
+    loadAdminOverview();
+  }
+}
+
 function copyWhatsappAccess(id) {
   const c = adminState.clients.find(item => item.id === id);
   if (!c) return;
@@ -340,8 +370,7 @@ function copyWhatsappAccess(id) {
     `🔑 *Usuário no App:* ${c.username}`,
     `🔒 *Senha:* ${c.password}`,
     `📺 *Plano:* ${c.planName}`,
-    `📅 *Vencimento:* ${c.expiresAtFormatted}`,
-    `📟 *MAC Vinculado:* ${c.macAddress}`
+    `📅 *Vencimento:* ${c.expiresAtFormatted}`
   ].join('\n');
 
   navigator.clipboard.writeText(text).then(() => {

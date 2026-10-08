@@ -1455,6 +1455,11 @@ app.get('/api/admin/overview', requireAdminAuth, (req, res) => {
     };
   });
 
+  const enrichedPayments = (db.payments || []).map(p => ({
+    ...p,
+    dateFormatted: formatDateBr(p.date)
+  }));
+
   res.json({
     ok: true,
     stats: {
@@ -1467,7 +1472,7 @@ app.get('/api/admin/overview', requireAdminAuth, (req, res) => {
     settings: db.settings,
     iptvServers: db.iptvServers,
     clients: enrichedClients,
-    payments: db.payments
+    payments: enrichedPayments
   });
 });
 
@@ -1567,6 +1572,14 @@ app.post('/api/admin/clients/:id/toggle-status', requireAdminAuth, (req, res) =>
 app.delete('/api/admin/clients/:id', requireAdminAuth, (req, res) => {
   const db = loadDb();
   db.clients = db.clients.filter(c => c.id !== req.params.id);
+  saveDb(db);
+  res.json({ ok: true });
+});
+
+// Excluir Registro de Mensalidade / Pagamento
+app.delete('/api/admin/payments/:id', requireAdminAuth, (req, res) => {
+  const db = loadDb();
+  db.payments = (db.payments || []).filter(p => p.id !== req.params.id);
   saveDb(db);
   res.json({ ok: true });
 });

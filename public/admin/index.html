@@ -129,15 +129,44 @@
       }
       th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
       .badge {
-        padding: 3px 9px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        white-space: nowrap;
+        padding: 5px 12px;
         border-radius: 999px;
-        font-size: 11px;
+        font-size: 11.5px;
         font-weight: 700;
+        line-height: 1;
       }
       .badge-active { background: rgba(6, 182, 212, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); }
-      .badge-expired, .badge-blocked { background: rgba(220, 38, 38, 0.2); color: #f87171; }
-      .badge-soon { background: rgba(234, 179, 8, 0.2); color: #facc15; }
-      .actions-cell { display: flex; gap: 6px; flex-wrap: wrap; }
+      .badge-expired, .badge-blocked { background: rgba(220, 38, 38, 0.2); color: #f87171; border: 1px solid rgba(248, 113, 113, 0.3); }
+      .badge-soon { background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(250, 204, 21, 0.3); }
+      .actions-cell { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+      .payments-centered-panel {
+        max-width: 960px;
+        width: 100%;
+        margin: 8px auto 32px auto;
+        padding: 26px 30px;
+      }
+      .payments-centered-panel .panel-header {
+        justify-content: center;
+        text-align: center;
+        margin-bottom: 20px;
+      }
+      .payments-centered-panel .panel-header h2 {
+        font-size: 19px;
+        font-weight: 800;
+      }
+      .payments-centered-panel table {
+        font-size: 14px;
+      }
+      .payments-centered-panel th,
+      .payments-centered-panel td {
+        text-align: center;
+        padding: 14px 12px;
+      }
 
       /* Modal Nativo <dialog closedby="any"> */
       dialog.admin-dialog {
@@ -340,7 +369,7 @@
     <div class="panel">
       <div class="panel-header">
         <h2>👥 Clientes, Credenciais do App & Listas IPTV Vinculadas</h2>
-        <input type="text" id="searchClientInput" class="search-input" placeholder="🔍 Buscar por nome, usuário ou MAC..." oninput="renderClientsTable()" />
+        <input type="text" id="searchClientInput" class="search-input" placeholder="🔍 Buscar por nome ou usuário..." oninput="renderClientsTable()" />
       </div>
       <div style="overflow-x:auto;">
         <table>
@@ -348,7 +377,6 @@
             <tr>
               <th>Cliente / WhatsApp</th>
               <th>Login no App 3A</th>
-              <th>Endereço MAC</th>
               <th>Fonte Lista IPTV</th>
               <th>Plano / Mensalidade</th>
               <th>Vencimento</th>
@@ -361,12 +389,12 @@
       </div>
     </div>
 
-    <!-- HISTÓRICO DE MENSALIDADES E GUIA DE APK ANDROID -->
-    <div style="display:grid;grid-template-columns: 1fr 1fr;gap:20px;">
-      <div class="panel">
-        <div class="panel-header">
-          <h2>💳 Últimas Mensalidades / Renovações</h2>
-        </div>
+    <!-- HISTÓRICO DE MENSALIDADES CENTRALIZADO E AMPLIADO -->
+    <div class="panel payments-centered-panel">
+      <div class="panel-header">
+        <h2>💳 Últimas Mensalidades / Renovações</h2>
+      </div>
+      <div style="overflow-x:auto;">
         <table>
           <thead>
             <tr>
@@ -374,24 +402,11 @@
               <th>Cliente</th>
               <th>Método</th>
               <th>Valor</th>
+              <th>Remover</th>
             </tr>
           </thead>
           <tbody id="paymentsTableBody"></tbody>
         </table>
-      </div>
-
-      <div class="panel">
-        <div class="panel-header">
-          <h2>📦 Como Gerar o APK Android (3A Stream)</h2>
-        </div>
-        <p style="font-size:13px;color:#d1d5db;line-height:1.6;margin-bottom:10px;">
-          O projeto já está configurado com <strong>Capacitor Android</strong> (`com.tresastream.iptv`) apontando para o Player em <code>public/player</code> com suporte a listas HTTP/HTTPS (`cleartext: true`).
-        </p>
-        <ol style="font-size:12.5px;color:#9ca3af;line-height:1.7;padding-left:18px;">
-          <li>Para testar agora mesmo com Controle Remoto Virtual, clique em <strong>"Abrir App Android / Emulador 3A Stream"</strong> no topo.</li>
-          <li>Para compilar o instalador <code>.apk</code> no Android Studio, execute no terminal: <code>npm run android:init</code> e depois <code>npm run android:open</code>.</li>
-          <li>Quando o cliente instalar o APK, basta ele digitar o <strong>Usuário e Senha</strong> que você criou na tabela acima — a lista Xtream API ou M3U configurada por você será entregue automaticamente!</li>
-        </ol>
       </div>
     </div>
     </div>
