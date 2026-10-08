@@ -2,23 +2,158 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Readable } = require('stream');
 
+// ============================================================================
+// CARREGAMENTO NATIVO E SEGURO DE VARIÁVEIS DE AMBIENTE (.env)
+// ============================================================================
+(function loadDotEnvIfPresent() {
+  try {
+    const envPath = path.join(__dirname, '.env');
+    if (!fs.existsSync(envPath)) return;
+    const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx <= 0) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      let val = trimmed.slice(eqIdx + 1).trim();
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      if (key && process.env[key] === undefined) {
+        process.env[key] = val;
+      }
+    }
+  } catch (_) {}
+})();
+
 const app = express();
+app.disable('x-powered-by');
 const PORT = process.env.PORT || 3000;
 
+// ============================================================================
+// CAMADA DE BLINDAGEM DE SEGURANÇA (HEADERS HTTP, BLOQUEIO DE ARQUIVOS SENSÍVEIS,
+// ANTI-BRUTE-FORCE RATE LIMITER, HASH SHA-256 E ANTI-SSRF)
+// ============================================================================
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Range, Accept');
   res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
+
+  // Bloqueia tentativas de acesso direto a arquivos internos (.env, .git, banco JSON, server.js)
+  const lowerPath = (req.path || '').toLowerCase();
+  if (
+    lowerPath.includes('.env') ||
+    lowerPath.includes('.git') ||
+    lowerPath.startsWith('/data') ||
+    lowerPath.endsWith('3a_stream_db.json') ||
+    lowerPath.endsWith('catalog_cache.json') ||
+    lowerPath === '/server.js' ||
+    lowerPath === '/package.json'
+  ) {
+    return res.status(403).json({ ok: false, error: 'Acesso negado.' });
+  }
+
   next();
 });
 app.use(cors());
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({ limit: '5mb' }));
+
+function hashSecretPassword(plainPassword) {
+  return 'sha256:' + crypto
+    .createHash('sha256')
+    .update('3a_stream_salt_v1:' + String(plainPassword || '').trim())
+    .digest('hex');
+}
+
+function verifyPasswordMatch(inputPassword, storedPasswordOrHash) {
+  if (!inputPassword || !storedPasswordOrHash) return false;
+  const cleanInput = String(inputPassword).trim();
+  const cleanStored = String(storedPasswordOrHash).trim();
+  const candidate = cleanStored.startsWith('sha256:') ? hashSecretPassword(cleanInput) : cleanInput;
+  const bufA = Buffer.from(candidate);
+  const bufB = Buffer.from(cleanStored);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+// Proteção Anti-Brute-Force por IP nas rotas de Login
+const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 8);
+const LOGIN_WINDOW_MS = Number(process.env.LOGIN_WINDOW_MINUTES || 10) * 60 * 1000;
+const loginAttemptsByIp = new Map();
+
+function getClientIp(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff.trim()) {
+    return xff.split(',')[0].trim();
+  }
+  return req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
+}
+
+function isLoginRateLimited(req) {
+  const ip = getClientIp(req);
+  const entry = loginAttemptsByIp.get(ip);
+  if (!entry) return false;
+  if (Date.now() - entry.firstAttemptAt > LOGIN_WINDOW_MS) {
+    loginAttemptsByIp.delete(ip);
+    return false;
+  }
+  return entry.count >= LOGIN_MAX_ATTEMPTS;
+}
+
+function recordFailedLoginAttempt(req) {
+  const ip = getClientIp(req);
+  const now = Date.now();
+  const entry = loginAttemptsByIp.get(ip);
+  if (!entry || now - entry.firstAttemptAt > LOGIN_WINDOW_MS) {
+    loginAttemptsByIp.set(ip, { count: 1, firstAttemptAt: now });
+  } else {
+    entry.count++;
+  }
+}
+
+function clearFailedLoginAttempts(req) {
+  loginAttemptsByIp.delete(getClientIp(req));
+}
+
+// Proteção Anti-SSRF no Proxy de Stream (bloqueia IPs privados, loopback e metadados de nuvem)
+function isSafeExternalStreamUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl).trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const host = (parsed.hostname || '').toLowerCase();
+    if (!host) return false;
+    if (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '0.0.0.0' ||
+      host === '::1' ||
+      host === '[::1]' ||
+      host === '169.254.169.254' ||
+      host.startsWith('127.') ||
+      host.startsWith('10.') ||
+      host.startsWith('192.168.') ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+    ) {
+      return false;
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, localProxy: true });
@@ -264,7 +399,7 @@ function createInitialDb() {
         name: 'Balok',
         phone: '(11) 99999-0001',
         username: 'asmj10',
-        password: 'athena10$GA',
+        password: 'sha256:ce4ea5e1bb97e73c4d2144b19c9b75c274541edc74f14f412e3e2e9f7a6a3ed1',
         macAddress: '61:F3:CF:92:93:B1',
         planName: 'Plano 3A Completo 4K',
         monthlyPrice: 35.0,
@@ -860,6 +995,9 @@ const vodRedirectCache = new Map();
 app.get('/api/proxy/stream', async (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl) return res.status(400).send('Missing url');
+  if (!isSafeExternalStreamUrl(targetUrl)) {
+    return res.status(403).send('Forbidden target URL');
+  }
 
   const isVodOrSeries = targetUrl.includes('/movie/') || targetUrl.includes('/series/') || targetUrl.endsWith('.mp4') || targetUrl.endsWith('.mkv');
   const isSameVodTarget = isVodOrSeries && activeUpstreamTargetUrl === targetUrl;
@@ -1070,13 +1208,20 @@ async function resolveIptvCatalog({ iptvSourceType, xtreamUrl, xtreamUser, xtrea
 
 // 1. Login do Cliente no Aplicativo 3A Stream (ou Login por MAC Address)
 app.post('/api/player/login', async (req, res) => {
-  const { username, password, macAddress, preferredFormat } = req.body;
+  if (isLoginRateLimited(req)) {
+    return res.status(429).json({
+      ok: false,
+      error: 'Muitas tentativas de login seguidas. Aguarde alguns minutos e tente novamente.'
+    });
+  }
+
+  const { username, password, macAddress, preferredFormat } = req.body || {};
   const db = loadDb();
 
   let client = null;
   if (username && password) {
     client = db.clients.find(
-      c => c.username.toLowerCase() === String(username).trim().toLowerCase() && c.password === String(password).trim()
+      c => c.username.toLowerCase() === String(username).trim().toLowerCase() && verifyPasswordMatch(password, c.password)
     );
   } else if (macAddress) {
     client = db.clients.find(
@@ -1085,11 +1230,14 @@ app.post('/api/player/login', async (req, res) => {
   }
 
   if (!client) {
+    recordFailedLoginAttempt(req);
     return res.status(401).json({
       ok: false,
       error: 'Usuário ou senha inválidos. Verifique seus dados com o suporte 3A Stream.'
     });
   }
+
+  clearFailedLoginAttempts(req);
 
   const expired = isExpired(client.expiresAt);
   if (client.status === 'blocked' || expired) {
@@ -1193,23 +1341,34 @@ app.post('/api/player/custom-playlist', async (req, res) => {
 // ============================================================================
 // AUTENTICAÇÃO E ROTAS PROTEGIDAS DO PAINEL DE CONTROLE (ADMIN DASHBOARD)
 // ============================================================================
-const crypto = require('crypto');
 const ADMIN_MASTER_USER = process.env.ADMIN_USER || 'asmj10';
-const ADMIN_MASTER_PASS = process.env.ADMIN_PASS || 'athena10$GA';
-const ADMIN_TOKEN_SECRET = process.env.ADMIN_SECRET || '3a_stream_master_secret_2026_balok';
+// Hash criptográfico SHA-256 com salt (a senha em texto plano NUNCA fica exposta no código-fonte)
+const ADMIN_MASTER_PASS_HASH = 'sha256:ce4ea5e1bb97e73c4d2144b19c9b75c274541edc74f14f412e3e2e9f7a6a3ed1';
+const ADMIN_TOKEN_SECRET = process.env.ADMIN_SECRET || '3a_stream_master_secret_2026_balok_v2_shield';
+const ADMIN_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
 
 function generateAdminToken(username) {
   const cleanUser = String(username).trim().toLowerCase();
-  const sig = crypto.createHmac('sha256', ADMIN_TOKEN_SECRET).update(cleanUser).digest('hex');
-  return `${cleanUser}.${sig}`;
+  const issuedAt = Date.now();
+  const payload = `${cleanUser}.${issuedAt}`;
+  const sig = crypto.createHmac('sha256', ADMIN_TOKEN_SECRET).update(payload).digest('hex');
+  return `${payload}.${sig}`;
 }
 
 function verifyAdminToken(token) {
-  if (!token || typeof token !== 'string' || !token.includes('.')) return false;
-  const [user, sig] = token.split('.');
+  if (!token || typeof token !== 'string') return false;
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  const [user, issuedAtStr, sig] = parts;
   if (user !== ADMIN_MASTER_USER.toLowerCase()) return false;
-  const expected = crypto.createHmac('sha256', ADMIN_TOKEN_SECRET).update(user).digest('hex');
-  return sig === expected;
+  const issuedAt = Number(issuedAtStr);
+  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > ADMIN_TOKEN_TTL_MS) return false;
+
+  const expected = crypto.createHmac('sha256', ADMIN_TOKEN_SECRET).update(`${user}.${issuedAtStr}`).digest('hex');
+  const bufA = Buffer.from(sig);
+  const bufB = Buffer.from(expected);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
 }
 
 function requireAdminAuth(req, res, next) {
@@ -1218,7 +1377,7 @@ function requireAdminAuth(req, res, next) {
   if (!verifyAdminToken(token)) {
     return res.status(401).json({
       ok: false,
-      error: 'Acesso restrito. Faça login como Administrador para acessar o painel.'
+      error: 'Acesso restrito ou sessão expirada. Faça login como Administrador.'
     });
   }
   next();
@@ -1226,11 +1385,20 @@ function requireAdminAuth(req, res, next) {
 
 // Login do Administrador no Painel (/admin)
 app.post('/api/admin/login', (req, res) => {
+  if (isLoginRateLimited(req)) {
+    return res.status(429).json({
+      ok: false,
+      error: 'Muitas tentativas de login. Aguarde alguns minutos antes de tentar novamente.'
+    });
+  }
+
   const { username, password } = req.body || {};
   const u = String(username || '').trim();
   const p = String(password || '').trim();
 
-  if (u.toLowerCase() === ADMIN_MASTER_USER.toLowerCase() && p === ADMIN_MASTER_PASS) {
+  const expectedAuth = process.env.ADMIN_PASS ? process.env.ADMIN_PASS : ADMIN_MASTER_PASS_HASH;
+  if (u.toLowerCase() === ADMIN_MASTER_USER.toLowerCase() && verifyPasswordMatch(p, expectedAuth)) {
+    clearFailedLoginAttempts(req);
     return res.json({
       ok: true,
       token: generateAdminToken(u),
@@ -1238,6 +1406,7 @@ app.post('/api/admin/login', (req, res) => {
     });
   }
 
+  recordFailedLoginAttempt(req);
   return res.status(401).json({
     ok: false,
     error: 'Credenciais de Administrador inválidas.'
@@ -1273,8 +1442,13 @@ app.get('/api/admin/overview', requireAdminAuth, (req, res) => {
       expiringSoonCount++;
     }
 
+    const displayPassword = String(c.password || '').startsWith('sha256:')
+      ? '••••••••'
+      : c.password;
+
     return {
       ...c,
+      password: displayPassword,
       effectiveStatus,
       isExpiringSoon,
       expiresAtFormatted: formatDateBr(c.expiresAt)
@@ -1309,7 +1483,10 @@ app.post('/api/admin/clients', requireAdminAuth, (req, res) => {
   if (payload.id) {
     const idx = db.clients.findIndex(c => c.id === payload.id);
     if (idx === -1) return res.status(404).json({ ok: false, error: 'Cliente não encontrado.' });
-    db.clients[idx] = { ...db.clients[idx], ...payload };
+    const preservedPassword = payload.password === '••••••••'
+      ? db.clients[idx].password
+      : payload.password.trim();
+    db.clients[idx] = { ...db.clients[idx], ...payload, password: preservedPassword };
     saveDb(db);
     return res.json({ ok: true, client: db.clients[idx] });
   }

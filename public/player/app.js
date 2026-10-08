@@ -303,8 +303,10 @@ function initDialogLightDismissFallback() {
 }
 
 function updateMacDisplays() {
-  document.getElementById('loginMacDisplay').textContent = appState.macAddress;
-  document.getElementById('settingsMacDisplay').textContent = appState.macAddress;
+  const loginMacEl = document.getElementById('loginMacDisplay');
+  if (loginMacEl) loginMacEl.textContent = appState.macAddress;
+  const settingsMacEl = document.getElementById('settingsMacDisplay');
+  if (settingsMacEl) settingsMacEl.textContent = appState.macAddress;
 }
 
 function startClockTimer() {
@@ -588,44 +590,57 @@ async function performLogin(username, password) {
     localStorage.setItem('3a_mac_address', appState.macAddress);
     updateMacDisplays();
 
+    // Salva cache de sessão autenticada apenas neste dispositivo para contingência offline/wake-up do servidor
+    try {
+      if (xo && xo.baseUrl && xo.username && xo.password) {
+        localStorage.setItem('3a_device_session_backup', JSON.stringify({
+          u: String(username).toLowerCase(),
+          profile: {
+            name: data.profile.name,
+            username: data.profile.username,
+            expiresAtFormatted: data.profile.expiresAtFormatted,
+            parentalPin: data.profile.parentalPin || '0000',
+            sourceLabel: data.profile.sourceLabel
+          },
+          xo
+        }));
+      }
+    } catch (_) {}
+
     document.getElementById('homeClientName').textContent = data.profile.name;
     document.getElementById('homeExpirationDate').textContent = data.profile.expiresAtFormatted || '15/06/2026';
 
     navigateToScreen('screenHome');
     showToast(`✅ Bem-vindo, ${data.profile.name}! Lista completa carregada.`);
   } catch (err) {
-    // Fallback Standalone Direto para o APK Mobile caso o servidor nuvem/PC esteja indisponível
-    const standaloneAccounts = {
-      'teste': { pass: '123', host: 'http://sevdns.sbs:80', xUser: '603279198', xPass: '448213191', name: 'Teste', exp: '06/11/2026', pin: '0000' },
-      'asmj10': { pass: 'athena10$GA', host: 'http://sev3u.sbs:80', xUser: '371047218', xPass: '357753734', name: 'Balok', exp: '15/06/2027', pin: '1904' }
-    };
-    const matched = standaloneAccounts[username];
-    if (matched && matched.pass === password) {
-      try {
+    // Contingência local segura: utiliza apenas a sessão já autenticada previamente neste próprio aparelho
+    try {
+      const savedBackup = JSON.parse(localStorage.getItem('3a_device_session_backup') || 'null');
+      const savedUser = localStorage.getItem('3a_saved_username') || '';
+      const savedPass = localStorage.getItem('3a_saved_password') || '';
+      if (
+        savedBackup &&
+        savedBackup.u === String(username).toLowerCase() &&
+        savedUser.toLowerCase() === String(username).toLowerCase() &&
+        savedPass === password &&
+        savedBackup.xo
+      ) {
         const catalog = await standaloneXtreamFetchCatalog(
-          matched.host || 'http://sev3u.sbs:80',
-          matched.xUser || '371047218',
-          matched.xPass || '357753734',
+          savedBackup.xo.baseUrl,
+          savedBackup.xo.username,
+          savedBackup.xo.password,
           appState.preferences.streamFormat
         );
         appState.loggedIn = true;
-        appState.profile = {
-          name: matched.name,
-          username,
-          expiresAtFormatted: matched.exp || '08/05/2026',
-          parentalPin: matched.pin || '0000',
-          sourceLabel: `Xtream Real (${matched.host})`
-        };
+        appState.profile = savedBackup.profile;
         appState.catalog = catalog;
         document.getElementById('homeClientName').textContent = appState.profile.name;
         document.getElementById('homeExpirationDate').textContent = appState.profile.expiresAtFormatted;
         navigateToScreen('screenHome');
-        showToast(`✅ Conectado (${matched.name})!`);
         return;
-      } catch (e2) {
-        console.warn('Standalone fallback error:', e2);
       }
-    }
+    } catch (_) {}
+
     errBox.textContent = 'Erro de conexão com o servidor 3A Stream.';
     errBox.classList.remove('hidden');
   } finally {
@@ -2638,10 +2653,6 @@ function renderMediaDetailTabs() {
     const progKey = getEpisodeProgressKey(activeSeriesItem, activeSeasonKey, ep, idx);
     const prog = getWatchProgressByKey(progKey);
 
-    const thumbProgressBarHtml = prog
-      ? `<div class="ep-watch-progress-bar"><div class="ep-watch-progress-fill" style="width:${prog.percent}%;"></div></div>`
-      : '';
-
     const underCardProgressHtml = prog
       ? `
         <div class="ep-watch-status-row">
@@ -2664,7 +2675,6 @@ function renderMediaDetailTabs() {
         </div>
         <div class="ep-corner-badge">▶</div>
         <span class="card-dl-btn" title="Baixar Episódio em MP4">⬇ MP4</span>
-        ${thumbProgressBarHtml}
       </div>
       <div class="ep-card-caption">${ep.title}</div>
       ${underCardProgressHtml}
@@ -2944,9 +2954,9 @@ function openSettingAction(actionKey) {
           Conectado atualmente como: <strong>${appState.profile ? appState.profile.name : 'Convidado'}</strong>
         </p>
         <label>Usuário 3A Stream</label>
-        <input type="text" id="modalSwitchUser" value="${appState.profile ? appState.profile.username : 'admin'}" />
+        <input type="text" id="modalSwitchUser" value="${appState.profile ? appState.profile.username : ''}" placeholder="Digite o usuário" />
         <label>Senha</label>
-        <input type="password" id="modalSwitchPass" value="123" />
+        <input type="password" id="modalSwitchPass" value="" placeholder="Digite a senha" />
         <div class="dialog-actions">
           <button type="button" class="btn-primary-green" onclick="submitSwitchAccount()">Trocar Conta</button>
         </div>
