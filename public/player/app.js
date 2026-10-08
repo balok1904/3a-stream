@@ -2,6 +2,17 @@
 // 3A STREAM - PLAYER APPLICATION & ANDROID / TV BOX TESTBENCH
 // ============================================================================
 
+function getOrCreateDeviceMac() {
+  let saved = localStorage.getItem('3a_device_mac');
+  if (!saved || !/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/i.test(saved)) {
+    const hex = () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0').toUpperCase();
+    saved = `3A:${hex()}:${hex()}:${hex()}:${hex()}:${hex()}`;
+    localStorage.setItem('3a_device_mac', saved);
+    localStorage.setItem('3a_mac_address', saved);
+  }
+  return saved;
+}
+
 const appState = {
   loggedIn: false,
   profile: null,
@@ -10,7 +21,7 @@ const appState = {
   currentSection: 'live', // 'live' | 'soccer' | 'vod' | 'series'
   selectedCategoryId: 'ALL',
   currentPlayingId: null,
-  macAddress: localStorage.getItem('3a_mac_address') || '61:F3:CF:92:93:B1',
+  macAddress: getOrCreateDeviceMac(),
   preferences: {
     streamFormat: localStorage.getItem('3a_stream_format') || 'ts', // 'ts' | 'm3u8'
     timeFormat: localStorage.getItem('3a_time_format') || '24h', // '24h' | '12h'
@@ -217,6 +228,17 @@ document.addEventListener('DOMContentLoaded', () => {
   initKeyboardDpadNavigation();
   initCinemaTouchWakeup();
   initAndroidBackNavigation();
+
+  // Restaura credenciais salvas no dispositivo se "Lembrar credenciais" estiver ativo
+  const rememberPref = localStorage.getItem('3a_remember_credentials') !== 'false';
+  const chkRemember = document.getElementById('chkRememberAccount');
+  if (chkRemember) chkRemember.checked = rememberPref;
+  if (rememberPref) {
+    const savedUser = localStorage.getItem('3a_saved_username') || '';
+    const savedPass = localStorage.getItem('3a_saved_password') || '';
+    if (savedUser) document.getElementById('loginUsername').value = savedUser;
+    if (savedPass) document.getElementById('loginPassword').value = savedPass;
+  }
 
   // Permite login automático via querystring do Painel Admin (?user=...&pass=...)
   const params = new URLSearchParams(window.location.search);
@@ -518,10 +540,21 @@ async function performLogin(username, password) {
       }
     }
 
+    const chkRemember = document.getElementById('chkRememberAccount');
+    const shouldRemember = chkRemember ? chkRemember.checked : true;
+    localStorage.setItem('3a_remember_credentials', shouldRemember ? 'true' : 'false');
+    if (shouldRemember) {
+      localStorage.setItem('3a_saved_username', username);
+      localStorage.setItem('3a_saved_password', password);
+    } else {
+      localStorage.removeItem('3a_saved_username');
+      localStorage.removeItem('3a_saved_password');
+    }
+
     appState.loggedIn = true;
     appState.profile = data.profile;
     appState.catalog = finalCatalog;
-    appState.macAddress = data.profile.macAddress || appState.macAddress;
+    appState.macAddress = getOrCreateDeviceMac();
     localStorage.setItem('3a_mac_address', appState.macAddress);
     updateMacDisplays();
 

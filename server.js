@@ -1041,8 +1041,8 @@ app.post('/api/player/login', async (req, res) => {
     });
   }
 
-  if (macAddress && (!client.macAddress || client.macAddress === 'AUTO')) {
-    client.macAddress = macAddress.toUpperCase();
+  if (macAddress && String(macAddress).trim() !== 'AUTO') {
+    client.macAddress = String(macAddress).trim().toUpperCase();
   }
   client.lastLoginAt = new Date().toISOString();
   saveDb(db);

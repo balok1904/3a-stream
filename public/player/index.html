@@ -40,7 +40,7 @@
     <div id="deviceViewport" class="device-viewport">
 
       <!-- =================================================================
-           1. TELA DE LOGIN MODERNA (FIEL AO PRINT DE REFERÊNCIA + CONTA 3A)
+           1. TELA DE LOGIN MODERNA (CONTA 3A STREAM)
            ================================================================= -->
       <section id="screenLogin" class="app-screen active">
         <div class="login-container">
@@ -52,31 +52,14 @@
                 <span class="brand-3a">3A</span> <span class="brand-stream">STREAM</span>
               </div>
             </div>
-            <p class="brand-subtitle">Player Premium para Assinantes 3A, Xtream Codes e M3U</p>
-          </div>
-
-          <!-- Auth Tabs Navigation (Fiel ao Print de Referência) -->
-          <div class="auth-tabs-nav" role="tablist">
-            <button type="button" id="tabAccountBtn" class="auth-tab-btn active focusable" onclick="switchAuthTab('account')">
-              Conta 3A
-            </button>
-            <button type="button" id="tabXtreamBtn" class="auth-tab-btn focusable" onclick="switchAuthTab('xtream')">
-              Xtream API
-            </button>
-            <button type="button" id="tabM3uBtn" class="auth-tab-btn focusable" onclick="switchAuthTab('m3u')">
-              Link M3U
-            </button>
-            <button type="button" id="tabDemoBtn" class="auth-tab-btn focusable" onclick="switchAuthTab('demo')">
-              Demonstração
-            </button>
           </div>
 
           <div id="loginErrorBox" class="login-error-box hidden"></div>
 
-          <!-- ABA 1: CONTA 3A GERENCIADA PELO PAINEL ADMIN -->
+          <!-- LOGIN CONTA 3A STREAM -->
           <form id="loginForm" class="login-form" onsubmit="handleLoginSubmit(event)" autocomplete="off">
             <div class="input-group">
-              <label for="loginUsername">USUÁRIO 3A STREAM</label>
+              <label for="loginUsername">USUÁRIO</label>
               <div class="input-with-icon">
                 <span class="input-icon">👤</span>
                 <input type="text" id="loginUsername" class="focusable" placeholder="Digite seu usuário" value="" required autocomplete="off" />
@@ -93,10 +76,6 @@
 
             <div class="auth-checkbox-group">
               <label class="auth-checkbox-label">
-                <input type="checkbox" id="chkUseCorsProxyAccount" checked />
-                <span>Usar Proxy CORS Anti-Bloqueio (Recomendado para servidores HTTP)</span>
-              </label>
-              <label class="auth-checkbox-label">
                 <input type="checkbox" id="chkRememberAccount" checked />
                 <span>Lembrar credenciais no dispositivo</span>
               </label>
@@ -108,91 +87,12 @@
             </button>
           </form>
 
-          <!-- ABA 2: XTREAM CODES API DIRETO (IDÊNTICO AO PRINT DE REFERÊNCIA) -->
-          <form id="xtreamDirectForm" class="login-form hidden" onsubmit="handleDirectXtreamSubmit(event)" autocomplete="off">
-            <div class="input-group">
-              <label for="directXtreamHost">SERVIDOR / URL (DNS)</label>
-              <div class="input-with-icon">
-                <span class="input-icon">🌐</span>
-                <input type="text" id="directXtreamHost" class="focusable" placeholder="http://servidor.net:80" value="" required autocomplete="off" />
-              </div>
-            </div>
-
-            <div class="input-group">
-              <label for="directXtreamUser">USUÁRIO</label>
-              <div class="input-with-icon">
-                <span class="input-icon">👤</span>
-                <input type="text" id="directXtreamUser" class="focusable" placeholder="Seu usuário Xtream" value="" required autocomplete="off" />
-              </div>
-            </div>
-
-            <div class="input-group">
-              <label for="directXtreamPass">SENHA</label>
-              <div class="input-with-icon">
-                <span class="input-icon">🔒</span>
-                <input type="password" id="directXtreamPass" class="focusable" placeholder="••••••••" value="" required autocomplete="new-password" />
-              </div>
-            </div>
-
-            <div class="auth-checkbox-group">
-              <label class="auth-checkbox-label">
-                <input type="checkbox" id="chkXtreamCorsProxy" checked />
-                <span>Usar Proxy CORS (Necessário se o servidor IPTV for HTTP direto)</span>
-              </label>
-              <label class="auth-checkbox-label">
-                <input type="checkbox" id="chkXtreamRemember" checked />
-                <span>Lembrar credenciais no dispositivo</span>
-              </label>
-            </div>
-
-            <button type="submit" id="btnDirectXtreamSubmit" class="btn-primary-gradient focusable">
-              <span>⇥</span>
-              <span>Entrar no 3A Stream</span>
-            </button>
-          </form>
-
-          <!-- ABA 3: LINK M3U / M3U8 DIRETO -->
-          <form id="m3uDirectForm" class="login-form hidden" onsubmit="handleDirectM3uSubmit(event)" autocomplete="off">
-            <div class="input-group">
-              <label for="directM3uUrl">LINK DA LISTA M3U / M3U8</label>
-              <div class="input-with-icon">
-                <span class="input-icon">🔗</span>
-                <input type="url" id="directM3uUrl" class="focusable" placeholder="http://servidor.sbs:80/get.php?username=...&password=..." value="" required autocomplete="off" />
-              </div>
-              <small class="input-helper">Converte automaticamente links get.php para Xtream API (TV, Filmes e Séries completos).</small>
-            </div>
-
-            <div class="auth-checkbox-group">
-              <label class="auth-checkbox-label">
-                <input type="checkbox" id="chkM3uCorsProxy" checked />
-                <span>Usar Proxy CORS (Recomendado para listas M3U externas)</span>
-              </label>
-            </div>
-
-            <button type="submit" id="btnDirectM3uSubmit" class="btn-primary-gradient focusable">
-              <span>☁️</span>
-              <span>Carregar Lista M3U no 3A Stream</span>
-            </button>
-          </form>
-
-          <!-- ABA 4: DEMONSTRAÇÃO IMEDIATA -->
-          <div id="demoDirectPanel" class="login-form hidden">
-            <div class="demo-info-card">
-              <div class="demo-info-title">✨ Teste Imediato Sem Conta Externa</div>
-              <p>Experimente o 3A Stream agora com canais demonstrativos, transmissões ao vivo e catálogo VOD/Séries de teste.</p>
-            </div>
-            <button type="button" class="btn-emerald-gradient focusable" onclick="startInstantDemoSession()">
-              <span>🚀</span>
-              <span>Iniciar Sessão Demonstração</span>
-            </button>
-          </div>
-
-          <!-- RODAPÉ DE SEGURANÇA E ENDEREÇO MAC -->
+          <!-- RODAPÉ DE ENDEREÇO MAC E STATUS DO SERVIDOR -->
           <div class="login-footer-notice">
-            <span class="shield-icon">🛡️</span>
-            <div class="notice-text">
-              <div>Navegadores bloqueiam streams sem cabeçalho CORS. Com o <strong>Proxy 3A Ativo</strong>, canais <code>http://</code> e áudios 5.1 rodam com 100% de compatibilidade.</div>
-              <div class="mac-line">endereço MAC: <strong id="loginMacDisplay">61:F3:CF:92:93:B1</strong> • <span class="status-online-dot">● Servidor 3A Online</span></div>
+            <div class="mac-line">endereço MAC: <strong id="loginMacDisplay">3A:00:00:00:00:00</strong></div>
+            <div class="server-online-line">
+              <span class="pulse-green-dot"></span>
+              <span class="server-online-text">Servidor 3A Online</span>
             </div>
           </div>
         </div>
