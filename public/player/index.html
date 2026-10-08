@@ -171,8 +171,8 @@
                 <span class="xcard-label" data-i18n="series">Séries</span>
               </button>
 
-              <!-- FUTEBOL -->
-              <button type="button" class="xcard xcard-square focusable" onclick="openCatalogSection('soccer')">
+              <!-- ESPORTES -->
+              <button type="button" class="xcard xcard-square xcard-span-full focusable" onclick="openCatalogSection('soccer')">
                 <div class="xcard-icon-med">
                   <svg viewBox="0 0 64 64" width="54" height="54" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="32" cy="32" r="20" />
@@ -184,22 +184,7 @@
                     <line x1="14" y1="25" x2="24" y2="29" />
                   </svg>
                 </div>
-                <span class="xcard-label" data-i18n="soccer">Futebol</span>
-              </button>
-
-              <!-- PLAYLISTS -->
-              <button type="button" class="xcard xcard-square focusable" onclick="openCustomPlaylistModal()">
-                <div class="xcard-icon-med">
-                  <svg viewBox="0 0 64 64" width="54" height="54" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="12" y="16" width="28" height="10" rx="2" />
-                    <rect x="12" y="30" width="28" height="10" rx="2" />
-                    <rect x="12" y="44" width="28" height="10" rx="2" />
-                    <circle cx="44" cy="24" r="9" fill="#0891b2" stroke="#ffffff" stroke-width="2.2" />
-                    <ellipse cx="44" cy="24" rx="4" ry="9" />
-                    <line x1="35" y1="24" x2="53" y2="24" />
-                  </svg>
-                </div>
-                <span class="xcard-label" data-i18n="playlists">Playlits</span>
+                <span class="xcard-label" data-i18n="soccer">Esportes</span>
               </button>
 
             </div>
@@ -250,7 +235,7 @@
       </section>
 
       <!-- =================================================================
-           3. TELA DE CONFIGURAÇÕES (FIEL AO PRINT 2 - 17 FUNÇÕES + MAC)
+           3. TELA DE CONFIGURAÇÕES (16 FUNÇÕES + MAC)
            ================================================================= -->
       <section id="screenSettings" class="app-screen">
         <div class="settings-wrapper">
@@ -268,7 +253,7 @@
             <div style="width: 42px;"></div>
           </div>
 
-          <!-- GRADE DE 4 COLUNAS COM OS 17 BOTÕES EXATOS DO PRINT 2 -->
+          <!-- GRADE DE CONFIGURAÇÕES (SEM OPÇÃO DE PLAYLISTS) -->
           <div class="settings-grid">
 
             <!-- 1. Add Conta -->
@@ -283,13 +268,7 @@
               <span class="scard-text">Controle dos Pais</span>
             </button>
 
-            <!-- 3. Playlits -->
-            <button type="button" class="scard focusable" onclick="openCustomPlaylistModal()">
-              <span class="scard-icon">📋</span>
-              <span class="scard-text">Playlits</span>
-            </button>
-
-            <!-- 4. mudar idioma -->
+            <!-- 3. mudar idioma -->
             <button type="button" class="scard focusable" onclick="openSettingAction('language')">
               <span class="scard-icon">🈯</span>
               <span class="scard-text">mudar idioma</span>

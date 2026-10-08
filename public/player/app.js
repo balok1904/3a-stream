@@ -1628,7 +1628,7 @@ function openCatalogSection(section) {
 
   const titles = {
     live: '📺 TV ao Vivo',
-    soccer: '⚽ Futebol Ao Vivo & Esportes',
+    soccer: '⚽ Esportes',
     vod: '🍿 Filmes (VOD)',
     series: '🎬 Séries'
   };
@@ -3256,9 +3256,9 @@ async function loadCustomPlaylistFromModal() {
 // Traduções rápidas (PT / EN / ES)
 function applyTranslations(lang) {
   const dict = {
-    pt: { live_tv: 'TV ao Vivo', movies: 'Filmes', series: 'Séries', soccer: 'Futebol', playlists: 'Playlits', settings: 'Configurações', reload: 'recarregar', exit: 'Sair' },
-    en: { live_tv: 'Live TV', movies: 'Movies', series: 'Series', soccer: 'Soccer Live', playlists: 'Playlists', settings: 'Settings', reload: 'Reload', exit: 'Exit' },
-    es: { live_tv: 'TV en Vivo', movies: 'Películas', series: 'Series', soccer: 'Fútbol', playlists: 'Listas', settings: 'Ajustes', reload: 'Recargar', exit: 'Salir' }
+    pt: { live_tv: 'TV ao Vivo', movies: 'Filmes', series: 'Séries', soccer: 'Esportes', settings: 'Configurações', reload: 'recarregar', exit: 'Sair' },
+    en: { live_tv: 'Live TV', movies: 'Movies', series: 'Series', soccer: 'Sports', settings: 'Settings', reload: 'Reload', exit: 'Exit' },
+    es: { live_tv: 'TV en Vivo', movies: 'Películas', series: 'Series', soccer: 'Deportes', settings: 'Ajustes', reload: 'Recargar', exit: 'Salir' }
   };
   const t = dict[lang] || dict.pt;
   document.querySelectorAll('[data-i18n]').forEach(el => {
