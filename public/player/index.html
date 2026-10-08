@@ -13,6 +13,8 @@
   <!-- HLS.js (.m3u8) e MPEGTS.js (.ts) para reprodução de listas IPTV reais -->
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js"></script>
+  <!-- Google Cast CAF Sender SDK para Chromecast e Google TV -->
+  <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1" async></script>
 </head>
 <body class="mode-tvbox">
 
@@ -402,6 +404,13 @@
                 <div class="epg-header-row">
                   <h3 id="nowPlayingTitle">Selecione um canal ao lado</h3>
                   <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                    <button type="button" class="btn-cast-live focusable" id="btnCatalogCast" onclick="triggerCatalogLiveChromecast(event)" title="Transmitir para Chromecast / Smart TV">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;">
+                        <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>
+                        <line x1="2" y1="20" x2="2.01" y2="20"/>
+                      </svg>
+                      <span>Chromecast</span>
+                    </button>
                     <button type="button" class="btn-audio-boost focusable" id="btnCatalogAudioBoost" onclick="cycleAudioBoostMode()" title="Normalizador de Voz 5.1 Surround e Amplificador de Volume">
                       🔊 Voz 5.1 (180%)
                     </button>
@@ -448,6 +457,13 @@
                 <button type="button" class="media-watch-btn focusable" id="btnDetailPrimaryWatch">
                   ▶ Assistir S01E01 - Episodio 1
                 </button>
+                <button type="button" class="media-cast-hero-btn focusable" id="btnDetailCastEpisode" onclick="castActiveSeriesEpisode(event)" title="Transmitir para Chromecast / Smart TV">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px;">
+                    <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>
+                    <line x1="2" y1="20" x2="2.01" y2="20"/>
+                  </svg>
+                  <span>Chromecast</span>
+                </button>
                 <button type="button" class="media-download-hero-btn focusable" id="btnDetailDownloadEpisode" onclick="downloadActiveSeriesEpisode()">
                   ⬇️ Baixar MP4
                 </button>
@@ -491,6 +507,13 @@
               </div>
             </div>
             <div class="cinema-top-actions">
+              <button type="button" class="cinema-ctrl-btn cinema-ctrl-cast focusable" id="btnCinemaCast" onclick="triggerChromecastAction(event)" title="Transmitir para Chromecast / Smart TV">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;">
+                  <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>
+                  <line x1="2" y1="20" x2="2.01" y2="20"/>
+                </svg>
+                <span id="lblCinemaCastBtn">Chromecast</span>
+              </button>
               <button type="button" class="cinema-ctrl-btn focusable" id="btnCinemaFavorite" onclick="toggleCurrentCinemaFavorite(event)" title="Favoritar / Desfavoritar">
                 ☆ Favorito
               </button>
@@ -568,6 +591,12 @@
               <input type="range" class="cinema-seek-slider focusable" id="cinemaSeekSlider" min="0" max="1000" value="0" step="1" onpointerdown="handleCinemaTimelinePointerDown(event)" ontouchstart="handleCinemaTimelinePointerDown(event)" onmousedown="handleCinemaTimelinePointerDown(event)" oninput="handleCinemaTimelineInput(this.value, event)" onchange="handleCinemaTimelineCommit(this.value, event)" />
               <span class="cinema-time-lbl" id="cinemaTimeDuration">00:00</span>
               <button type="button" class="cinema-mute-btn focusable" id="btnCinemaMute" onclick="toggleCinemaMute(event)" title="Mudo / Som">🔊</button>
+              <button type="button" class="cinema-mute-btn cinema-bottom-cast-btn focusable" id="btnCinemaBottomCast" onclick="triggerChromecastAction(event)" title="Chromecast / Transmitir para TV">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>
+                  <line x1="2" y1="20" x2="2.01" y2="20"/>
+                </svg>
+              </button>
             </div>
 
             <!-- GAVETA LATERAL RÁPIDA DE EPISÓDIOS DENTRO DO PLAYER -->

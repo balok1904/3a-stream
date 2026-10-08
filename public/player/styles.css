@@ -2680,4 +2680,186 @@ video::-webkit-media-controls-start-playback-button {
   }
 }
 
+/* =========================================================
+   CHROMECAST & SMART TV CAST ENGINE STYLES
+   ========================================================= */
+.btn-cast-live {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.22) 0%, rgba(124, 58, 237, 0.28) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: #e0f2fe;
+  padding: 5px 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.18s ease;
+}
+
+.btn-cast-live:hover {
+  background: linear-gradient(135deg, #0284c7 0%, #7c3aed 100%);
+  color: #ffffff;
+  border-color: #7dd3fc;
+  transform: translateY(-1px);
+}
+
+.media-cast-hero-btn {
+  background: rgba(14, 165, 233, 0.2);
+  color: #e0f2fe;
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  backdrop-filter: blur(8px);
+  transition: all 0.2s ease;
+}
+
+.media-cast-hero-btn:hover {
+  background: linear-gradient(135deg, #0284c7 0%, #7c3aed 100%);
+  color: #ffffff;
+  border-color: #7dd3fc;
+  transform: translateY(-1px);
+}
+
+.cinema-ctrl-cast {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.28) 0%, rgba(124, 58, 237, 0.32) 100%) !important;
+  border-color: rgba(56, 189, 248, 0.55) !important;
+  color: #e0f2fe !important;
+}
+
+.cinema-ctrl-cast:hover {
+  background: linear-gradient(135deg, #0284c7 0%, #7c3aed 100%) !important;
+  color: #ffffff !important;
+}
+
+.cinema-bottom-cast-btn {
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.38);
+}
+
+.btn-cast-live.is-casting,
+.media-cast-hero-btn.is-casting,
+.cinema-ctrl-cast.is-casting,
+.cinema-bottom-cast-btn.is-casting {
+  background: linear-gradient(135deg, #059669 0%, #0284c7 100%) !important;
+  border-color: #6ee7b7 !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.55);
+}
+
+.cast-modal-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cast-media-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+.cast-media-banner-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.cast-media-banner-title {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #f8fafc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cast-media-banner-sub {
+  font-size: 11px;
+  color: #38bdf8;
+  margin-top: 2px;
+}
+
+.cast-options-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cast-option-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(20, 29, 47, 0.9);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  color: #f8fafc;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.cast-option-btn:hover {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.26) 0%, rgba(124, 58, 237, 0.28) 100%);
+  border-color: #38bdf8;
+  transform: translateY(-1px);
+}
+
+.cast-option-left {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.cast-option-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #0284c7, #7c3aed);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  flex-shrink: 0;
+}
+
+.cast-option-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.cast-option-desc {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.cast-remote-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(5, 150, 105, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  flex-wrap: wrap;
+}
+
+
 

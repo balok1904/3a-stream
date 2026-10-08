@@ -2333,6 +2333,17 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
     video.src = primaryUrl;
     video.play().catch(() => {});
   }
+
+  // Se o usuário já estiver com uma sessão ativa no Chromecast e trocar de canal/episódio/filme, envia automaticamente para a TV!
+  if (typeof isGoogleCastConnected === 'function' && isGoogleCastConnected()) {
+    setTimeout(() => {
+      const ctx = getCurrentCastTargetContext();
+      if (ctx) {
+        if (resumeTimeSeconds > 2) ctx.currentTime = resumeTimeSeconds;
+        startGoogleCastMedia(ctx).catch(() => {});
+      }
+    }, 150);
+  }
 }
 
 // ============================================================================
@@ -3390,3 +3401,588 @@ function showToast(_msg) {
   const toast = document.getElementById('appToast');
   if (toast) toast.classList.add('hidden');
 }
+
+// ============================================================================
+// MOTOR CHROMECAST & SMART TV 3A STREAM (WEB + ANDROID APK NATIVO)
+// Suporta:
+// 1. Google Cast SDK Oficial (Chromecast / Google TV / Android TV)
+// 2. HTML5 RemotePlayback API / AirPlay (Navegadores Mobile e Smart TVs)
+// 3. Bridge Nativa Android APK (Proxy LAN 0.0.0.0:34567 + Intent Cast/VLC/DLNA + Configurações Cast do Android)
+// ============================================================================
+const castEngineState = {
+  sdkReady: false,
+  isConnected: false,
+  deviceName: 'Chromecast / Google TV',
+  remotePlayer: null,
+  remoteController: null,
+  activeMediaInfo: null,
+  lastResolvedInfo: null
+};
+
+window.__onGCastApiAvailable = function (isAvailable) {
+  if (isAvailable && window.cast && window.cast.framework) {
+    initGoogleCastFramework();
+  }
+};
+
+function initGoogleCastFramework() {
+  if (castEngineState.sdkReady) return;
+  try {
+    const context = cast.framework.CastContext.getInstance();
+    context.setOptions({
+      receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+      autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+    });
+
+    const remotePlayer = new cast.framework.RemotePlayer();
+    const remoteController = new cast.framework.RemotePlayerController(remotePlayer);
+    castEngineState.remotePlayer = remotePlayer;
+    castEngineState.remoteController = remoteController;
+    castEngineState.sdkReady = true;
+
+    context.addEventListener(
+      cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+      (event) => {
+        const state = event.sessionState;
+        if (
+          state === cast.framework.SessionState.SESSION_STARTED ||
+          state === cast.framework.SessionState.SESSION_RESUMED
+        ) {
+          const session = context.getCurrentSession();
+          castEngineState.isConnected = true;
+          castEngineState.deviceName =
+            (session && session.getCastDevice && session.getCastDevice().friendlyName) ||
+            'Chromecast';
+          syncAllCastButtonsUI();
+        } else if (state === cast.framework.SessionState.SESSION_ENDED) {
+          castEngineState.isConnected = false;
+          syncAllCastButtonsUI();
+        }
+      }
+    );
+
+    if (remoteController && cast.framework.RemotePlayerEventType) {
+      remoteController.addEventListener(
+        cast.framework.RemotePlayerEventType.IS_CONNECTED_CHANGED,
+        () => {
+          castEngineState.isConnected = Boolean(remotePlayer.isConnected);
+          syncAllCastButtonsUI();
+        }
+      );
+    }
+  } catch (err) {
+    console.warn('Aviso ao inicializar Google Cast SDK:', err);
+  }
+}
+
+// Caso o script do Cast SDK tenha carregado antes do app.js
+if (window.cast && window.cast.framework && !castEngineState.sdkReady) {
+  initGoogleCastFramework();
+}
+
+function isGoogleCastConnected() {
+  try {
+    if (castEngineState.sdkReady && window.cast && window.cast.framework) {
+      const session = cast.framework.CastContext.getInstance().getCurrentSession();
+      return Boolean(session);
+    }
+  } catch (_) {}
+  return false;
+}
+
+function syncAllCastButtonsUI() {
+  const connected = isGoogleCastConnected();
+  castEngineState.isConnected = connected;
+
+  const ids = ['btnCinemaCast', 'btnCinemaBottomCast', 'btnCatalogCast', 'btnDetailCastEpisode'];
+  ids.forEach((id) => {
+    const btn = document.getElementById(id);
+    if (btn) {
+      btn.classList.toggle('is-casting', connected);
+    }
+  });
+
+  const lblCinema = document.getElementById('lblCinemaCastBtn');
+  if (lblCinema) {
+    lblCinema.textContent = connected ? `Na TV (${castEngineState.deviceName})` : 'Chromecast';
+  }
+}
+
+function getCurrentCastTargetContext() {
+  // 1. Se estiver no Cinema Player
+  if (appState.currentScreen === 'screenCinemaPlayer' && currentCinemaContext) {
+    const cinemaVideo = document.getElementById('cinemaVideoElement');
+    const currentTime = cinemaVideo && Number.isFinite(cinemaVideo.currentTime) ? Math.floor(cinemaVideo.currentTime) : 0;
+    const { mode, item, episode } = currentCinemaContext;
+    if (mode === 'series' && episode) {
+      const epNum = episode.episode_num || activeEpisodeIndex + 1;
+      return {
+        mode: 'series',
+        title: `${item ? item.name : 'Série'} — T${activeSeasonKey}:E${epNum}`,
+        subtitle: episode.title || `Episódio ${epNum}`,
+        poster: (episode && episode.thumbnail) || (item && item.poster) || '',
+        streamUrl: episode.streamUrl || (cinemaVideo ? cinemaVideo.currentSrc || cinemaVideo.src : ''),
+        item: episode,
+        currentTime,
+        videoElement: cinemaVideo
+      };
+    }
+    if (item) {
+      return {
+        mode: mode || 'vod',
+        title: item.name || '3A Stream',
+        subtitle: mode === 'live' ? (item.epgNow || 'TV ao Vivo') : 'Filme em Alta Definição',
+        poster: item.poster || item.logo || '',
+        streamUrl: item.streamUrl || (cinemaVideo ? cinemaVideo.currentSrc || cinemaVideo.src : ''),
+        item,
+        currentTime: mode === 'live' ? 0 : currentTime,
+        videoElement: cinemaVideo
+      };
+    }
+  }
+
+  // 2. Se estiver na tela de Detalhes da Série
+  if (appState.currentScreen === 'screenMediaDetail' && activeSeriesItem && activeSeriesItem.seasons) {
+    const seasonEps = activeSeriesItem.seasons[activeSeasonKey] || [];
+    const ep = seasonEps[activeEpisodeIndex] || seasonEps[0];
+    if (ep) {
+      const progKey = getEpisodeProgressKey(activeSeriesItem, activeSeasonKey, ep, activeEpisodeIndex);
+      const savedProg = getWatchProgressByKey(progKey);
+      return {
+        mode: 'series',
+        title: `${activeSeriesItem.name} — T${activeSeasonKey}:E${ep.episode_num || activeEpisodeIndex + 1}`,
+        subtitle: ep.title || 'Episódio da Série',
+        poster: ep.thumbnail || activeSeriesItem.poster || '',
+        streamUrl: ep.streamUrl,
+        item: ep,
+        currentTime: savedProg && savedProg.currentTime > 5 ? Math.floor(savedProg.currentTime) : 0,
+        videoElement: document.getElementById('cinemaVideoElement')
+      };
+    }
+  }
+
+  // 3. Se estiver no Catálogo de TV ao Vivo
+  const liveItem = appState.currentLiveItem;
+  const liveVideo = document.getElementById('iptvVideoPlayer');
+  if (liveItem) {
+    return {
+      mode: 'live',
+      title: liveItem.name || 'Canal Ao Vivo',
+      subtitle: liveItem.epgNow || 'Transmissão Ao Vivo 3A Stream',
+      poster: liveItem.logo || liveItem.poster || '',
+      streamUrl: liveItem.streamUrl || (liveVideo ? liveVideo.currentSrc || liveVideo.src : ''),
+      item: liveItem,
+      currentTime: 0,
+      videoElement: liveVideo
+    };
+  }
+
+  return null;
+}
+
+async function resolveCastableStreamInfo(targetCtx) {
+  if (!targetCtx) return null;
+  let rawUrl = extractRawStreamUrl(targetCtx.streamUrl, targetCtx.item);
+  if (!rawUrl) rawUrl = targetCtx.streamUrl || '';
+
+  const isLive = targetCtx.mode === 'live';
+  // Chromecast Default Media Receiver reproduz HLS (.m3u8) e MP4 nativamente; converte .ts ao vivo para .m3u8
+  let castRawUrl = rawUrl;
+  if (isLive && /\.ts(\?|$)/i.test(castRawUrl)) {
+    castRawUrl = castRawUrl.replace(/\.ts(\?|$)/i, '.m3u8$1');
+  }
+
+  const contentType = isLive || /\.m3u8(\?|$)/i.test(castRawUrl) ? 'application/x-mpegurl' : 'video/mp4';
+  const httpsDirectUrl = castRawUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/');
+
+  let lanProxyUrl = '';
+  let resolvedCdnUrl = '';
+
+  // A) Se estiver no APK Android com Bridge Nativa (MainActivity.java escutando em 0.0.0.0:34567)
+  if (window.AndroidCastBridge) {
+    try {
+      const lanBase = window.AndroidCastBridge.getLanProxyBaseUrl();
+      if (lanBase && /^http:\/\/\d+\.\d+\.\d+\.\d+/i.test(lanBase)) {
+        lanProxyUrl = `${lanBase}/proxy?url=${encodeURIComponent(castRawUrl)}`;
+      }
+      // Faz warmup rápido no proxy local caso o redirect 302 ainda não esteja em cache
+      let cached = window.AndroidCastBridge.getCachedRedirectUrl(castRawUrl);
+      if (!cached && !isLive) {
+        try {
+          await fetch(`http://127.0.0.1:34567/proxy?url=${encodeURIComponent(castRawUrl)}`, {
+            method: 'GET',
+            headers: { Range: 'bytes=0-1' }
+          });
+          cached = window.AndroidCastBridge.getCachedRedirectUrl(castRawUrl);
+        } catch (_) {}
+      }
+      if (cached && /^https?:\/\//i.test(cached)) {
+        resolvedCdnUrl = cached;
+      }
+    } catch (_) {}
+  }
+
+  // B) Se estiver no Navegador Web / PC, consulta /api/proxy/resolve-cast-url
+  if (!resolvedCdnUrl && !IS_NATIVE_APK) {
+    try {
+      const endpoint = LOCAL_PC_PROXY_BASE
+        ? `${LOCAL_PC_PROXY_BASE}/api/proxy/resolve-cast-url?url=${encodeURIComponent(castRawUrl)}`
+        : `/api/proxy/resolve-cast-url?url=${encodeURIComponent(castRawUrl)}`;
+      const res = await fetch(endpoint);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.ok) {
+          if (data.resolvedUrl) resolvedCdnUrl = data.resolvedUrl;
+          if (data.lanProxyUrl && !window.location.hostname.includes('onrender.com')) {
+            lanProxyUrl = data.lanProxyUrl;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Monta a lista ordenada de URLs para o Chromecast:
+  // 1. Proxy LAN Wi-Fi local (192.168.x.x) quando disponível, pois já entrega CORS (*) e Range bytes da própria internet residencial do usuário!
+  // 2. URL final resolvida do CDN (ex: r2-auth.atlaspainel.net) ou HTTPS direto
+  // 3. URL original
+  const candidateUrls = [];
+  const pushUnique = (u) => {
+    if (u && /^https?:\/\//i.test(u) && !candidateUrls.includes(u)) {
+      candidateUrls.push(u);
+    }
+  };
+
+  if (lanProxyUrl) pushUnique(lanProxyUrl);
+  if (resolvedCdnUrl) pushUnique(resolvedCdnUrl);
+  pushUnique(httpsDirectUrl);
+  pushUnique(castRawUrl);
+
+  const info = {
+    primaryUrl: candidateUrls[0] || httpsDirectUrl || castRawUrl,
+    fallbackUrls: candidateUrls.slice(1),
+    externalAppUrl: resolvedCdnUrl || lanProxyUrl || httpsDirectUrl || castRawUrl,
+    lanProxyUrl,
+    resolvedCdnUrl,
+    httpsDirectUrl,
+    rawUrl: castRawUrl,
+    contentType,
+    isLive
+  };
+  castEngineState.lastResolvedInfo = info;
+  return info;
+}
+
+async function startGoogleCastMedia(targetCtx, urlOverride = null) {
+  if (!targetCtx) return false;
+
+  // Se o Google Cast SDK estiver disponível no navegador (Chrome / Edge Desktop ou Android)
+  if (window.cast && window.cast.framework && window.chrome && window.chrome.cast) {
+    try {
+      if (!castEngineState.sdkReady) initGoogleCastFramework();
+      const context = cast.framework.CastContext.getInstance();
+      let session = context.getCurrentSession();
+      if (!session) {
+        await context.requestSession();
+        session = context.getCurrentSession();
+      }
+      if (!session) return false;
+
+      const streamInfo = await resolveCastableStreamInfo(targetCtx);
+      const urlsToTry = urlOverride
+        ? [urlOverride]
+        : [streamInfo.primaryUrl, ...(streamInfo.fallbackUrls || [])].filter(Boolean);
+
+      for (let i = 0; i < urlsToTry.length; i++) {
+        const mediaUrl = urlsToTry[i];
+        try {
+          const mediaInfo = new chrome.cast.media.MediaInfo(mediaUrl, streamInfo.contentType);
+          mediaInfo.streamType = streamInfo.isLive
+            ? chrome.cast.media.StreamType.LIVE
+            : chrome.cast.media.StreamType.BUFFERED;
+
+          const metadata = new chrome.cast.media.GenericMediaMetadata();
+          metadata.metadataType = chrome.cast.media.MetadataType.GENERIC;
+          metadata.title = targetCtx.title || '3A Stream';
+          metadata.subtitle = targetCtx.subtitle || 'Transmitindo pelo 3A Stream';
+          if (targetCtx.poster && /^https?:\/\//i.test(targetCtx.poster)) {
+            metadata.images = [new chrome.cast.Image(targetCtx.poster)];
+          }
+          mediaInfo.metadata = metadata;
+
+          const request = new chrome.cast.media.LoadRequest(mediaInfo);
+          request.autoplay = true;
+          if (!streamInfo.isLive && targetCtx.currentTime > 3) {
+            request.currentTime = targetCtx.currentTime;
+          }
+
+          await session.loadMedia(request);
+
+          // Pausa o vídeo local no aparelho enquanto reproduz na TV
+          if (targetCtx.videoElement && !targetCtx.videoElement.paused) {
+            targetCtx.videoElement.pause();
+          }
+
+          castEngineState.isConnected = true;
+          castEngineState.deviceName =
+            (session.getCastDevice && session.getCastDevice().friendlyName) || 'Chromecast';
+          syncAllCastButtonsUI();
+          return true;
+        } catch (loadErr) {
+          console.warn(`Tentativa Cast URL [${i + 1}/${urlsToTry.length}] falhou:`, mediaUrl, loadErr);
+        }
+      }
+    } catch (err) {
+      console.warn('Sessão Google Cast não iniciada ou cancelada:', err);
+    }
+  }
+
+  // Fallback HTML5 RemotePlayback API (Chrome Mobile / Safari AirPlay / Smart TVs)
+  const videoEl = targetCtx.videoElement || document.getElementById('cinemaVideoElement') || document.getElementById('iptvVideoPlayer');
+  if (videoEl) {
+    if (videoEl.remote && typeof videoEl.remote.prompt === 'function') {
+      try {
+        await videoEl.remote.prompt();
+        return true;
+      } catch (_) {}
+    }
+    if (typeof videoEl.webkitShowPlaybackTargetPicker === 'function') {
+      try {
+        videoEl.webkitShowPlaybackTargetPicker();
+        return true;
+      } catch (_) {}
+    }
+  }
+
+  // Fallback Nativo Android APK (abre seletor de apps de Cast / VLC / Web Video Caster / Smart TV)
+  if (window.AndroidCastBridge) {
+    const streamInfo = await resolveCastableStreamInfo(targetCtx);
+    window.AndroidCastBridge.launchExternalCastIntent(
+      streamInfo.externalAppUrl,
+      targetCtx.title || '3A Stream',
+      streamInfo.contentType
+    );
+    return true;
+  }
+
+  return false;
+}
+
+function triggerChromecastAction(event) {
+  if (event) event.stopPropagation();
+  const ctx = getCurrentCastTargetContext();
+  openCastControlModal(ctx);
+}
+
+function triggerCatalogLiveChromecast(event) {
+  if (event) event.stopPropagation();
+  if (!appState.currentLiveItem && appState.catalog && appState.catalog.liveStreams && appState.catalog.liveStreams.length > 0) {
+    playStreamItem(appState.catalog.liveStreams[0], false);
+  }
+  const ctx = getCurrentCastTargetContext();
+  openCastControlModal(ctx);
+}
+
+function castActiveSeriesEpisode(event) {
+  if (event) event.stopPropagation();
+  const ctx = getCurrentCastTargetContext();
+  openCastControlModal(ctx);
+}
+
+async function openCastControlModal(targetCtx) {
+  if (!targetCtx) {
+    openAppModal('📺 Transmitir para Chromecast / Smart TV', `
+      <p style="font-size:13px;color:#cbd5e1;line-height:1.5;">
+        Selecione primeiro um <strong>Canal ao Vivo</strong>, <strong>Filme</strong> ou <strong>Episódio de Série</strong> para iniciar a transmissão para a sua TV.
+      </p>
+      ${window.AndroidCastBridge ? `
+        <div class="dialog-actions" style="margin-top:14px;">
+          <button type="button" class="btn-primary-green" onclick="window.AndroidCastBridge.openSystemCastSettings(); closeAppModal();">
+            📡 Abrir Espelhamento Sem Fio do Android
+          </button>
+        </div>
+      ` : ''}
+    `);
+    return;
+  }
+
+  castEngineState.activeMediaInfo = targetCtx;
+  const connected = isGoogleCastConnected();
+  const hasNativeBridge = Boolean(window.AndroidCastBridge);
+
+  openAppModal('📺 Central Chromecast & Smart TV', `
+    <div class="cast-modal-box">
+      <div class="cast-media-banner">
+        <div class="cast-Option-icon" style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#0284c7,#7c3aed);display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;">
+          📺
+        </div>
+        <div class="cast-media-banner-info">
+          <div class="cast-media-banner-title">${targetCtx.title || '3A Stream'}</div>
+          <div class="cast-media-banner-sub">
+            ${connected ? `🟢 Conectado a: ${castEngineState.deviceName}` : `📡 Pronto para transmitir (${targetCtx.mode === 'live' ? 'Ao Vivo HLS' : 'Vídeo MP4 HD'})`}
+          </div>
+        </div>
+      </div>
+
+      ${connected ? `
+        <div class="cast-remote-controls">
+          <button type="button" class="cinema-ctrl-btn" onclick="controlActiveCastSession('rewind10')">⏪ -10s</button>
+          <button type="button" class="cinema-ctrl-btn" onclick="controlActiveCastSession('togglePlay')">⏯ Play / Pause</button>
+          <button type="button" class="cinema-ctrl-btn" onclick="controlActiveCastSession('forward10')">⏩ +10s</button>
+          <button type="button" class="cinema-ctrl-btn" style="background:rgba(239,68,68,0.25);border-color:rgba(248,113,113,0.5);color:#fecaca;" onclick="controlActiveCastSession('disconnect')">⏹ Desconectar</button>
+        </div>
+      ` : ''}
+
+      <div class="cast-options-grid">
+        <button type="button" class="cast-option-btn" id="btnModalStartGoogleCast" onclick="handleModalCastOption('google_cast')">
+          <div class="cast-option-left">
+            <div class="cast-option-icon">📺</div>
+            <div>
+              <div class="cast-option-title">${connected ? 'Enviar este Vídeo para o Chromecast Conectado' : 'Transmitir para Chromecast / Google TV'}</div>
+              <div class="cast-option-desc">Conecta direto ao Chromecast ou TV na mesma rede Wi-Fi</div>
+            </div>
+          </div>
+          <span style="color:#38bdf8;font-weight:800;font-size:13px;">▶</span>
+        </button>
+
+        <button type="button" class="cast-option-btn" onclick="handleModalCastOption('external_cast_app')">
+          <div class="cast-option-left">
+            <div class="cast-option-icon">📲</div>
+            <div>
+              <div class="cast-option-title">Transmitir via App / Smart TV (VLC, Web Video Cast, DLNA)</div>
+              <div class="cast-option-desc">Ideal para Chromecast no Android, Roku, LG WebOS, Samsung Tizen e VLC</div>
+            </div>
+          </div>
+          <span style="color:#38bdf8;font-weight:800;font-size:13px;">↗</span>
+        </button>
+
+        ${hasNativeBridge ? `
+          <button type="button" class="cast-option-btn" onclick="handleModalCastOption('system_cast_settings')">
+            <div class="cast-option-left">
+              <div class="cast-option-icon">📡</div>
+              <div>
+                <div class="cast-option-title">Espelhamento Sem Fio do Android (Smart View / Cast)</div>
+                <div class="cast-option-desc">Abre o painel nativo de transmissão de tela do seu celular Android</div>
+              </div>
+            </div>
+            <span style="color:#38bdf8;font-weight:800;font-size:13px;">⚙️</span>
+          </button>
+        ` : ''}
+
+        <button type="button" class="cast-option-btn" id="btnModalCopyCastUrl" onclick="handleModalCastOption('copy_url')">
+          <div class="cast-option-left">
+            <div class="cast-option-icon">🔗</div>
+            <div>
+              <div class="cast-option-title" id="lblModalCopyCastTitle">Copiar Link Direto do Stream para Smart TV / VLC</div>
+              <div class="cast-option-desc" id="lblModalCopyCastDesc">Gera o link desbloqueado na sua rede Wi-Fi para colar em qualquer player</div>
+            </div>
+          </div>
+          <span style="color:#38bdf8;font-weight:800;font-size:13px;">📋</span>
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+async function handleModalCastOption(option) {
+  const targetCtx = castEngineState.activeMediaInfo || getCurrentCastTargetContext();
+  if (!targetCtx && option !== 'system_cast_settings') return;
+
+  if (option === 'google_cast') {
+    const btn = document.getElementById('btnModalStartGoogleCast');
+    if (btn) {
+      const titleEl = btn.querySelector('.cast-option-title');
+      if (titleEl) titleEl.textContent = '⏳ Conectando ao dispositivo de transmissão...';
+    }
+    const ok = await startGoogleCastMedia(targetCtx);
+    if (ok) {
+      closeAppModal();
+    } else if (btn) {
+      const titleEl = btn.querySelector('.cast-option-title');
+      if (titleEl) titleEl.textContent = ' Selecionar Receptor (Chromecast / Smart TV)';
+    }
+    return;
+  }
+
+  if (option === 'external_cast_app') {
+    const streamInfo = await resolveCastableStreamInfo(targetCtx);
+    const targetUrl = streamInfo.externalAppUrl || streamInfo.primaryUrl;
+    if (window.AndroidCastBridge) {
+      closeAppModal();
+      window.AndroidCastBridge.launchExternalCastIntent(
+        targetUrl,
+        targetCtx.title || '3A Stream',
+        streamInfo.contentType
+      );
+      return;
+    }
+    // Em navegadores mobile Android fora do APK, aciona intent Android para VLC / Cast Players
+    if (/Android/i.test(navigator.userAgent || '')) {
+      const cleanNoProto = targetUrl.replace(/^https?:\/\//i, '');
+      const scheme = /^https:\/\//i.test(targetUrl) ? 'https' : 'http';
+      const intentUrl = `intent://${cleanNoProto}#Intent;scheme=${scheme};type=${streamInfo.contentType};S.title=${encodeURIComponent(targetCtx.title || '3A Stream')};end`;
+      closeAppModal();
+      window.location.href = intentUrl;
+      return;
+    }
+    // Em PC Desktop, abre ou copia para VLC
+    window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    return;
+  }
+
+  if (option === 'system_cast_settings') {
+    if (window.AndroidCastBridge) {
+      closeAppModal();
+      window.AndroidCastBridge.openSystemCastSettings();
+    }
+    return;
+  }
+
+  if (option === 'copy_url') {
+    const titleEl = document.getElementById('lblModalCopyCastTitle');
+    const descEl = document.getElementById('lblModalCopyCastDesc');
+    if (titleEl) titleEl.textContent = '⏳ Gerando link otimizado para rede Wi-Fi...';
+    const streamInfo = await resolveCastableStreamInfo(targetCtx);
+    const urlToCopy = streamInfo.externalAppUrl || streamInfo.primaryUrl;
+    try {
+      await navigator.clipboard.writeText(urlToCopy);
+      if (titleEl) titleEl.textContent = '✅ Link de Transmissão Copiado!';
+      if (descEl) descEl.textContent = urlToCopy;
+    } catch (_) {
+      if (titleEl) titleEl.textContent = '🔗 Link Direto Pronto:';
+      if (descEl) descEl.textContent = urlToCopy;
+    }
+  }
+}
+
+function controlActiveCastSession(command) {
+  try {
+    if (!window.cast || !window.cast.framework) return;
+    const context = cast.framework.CastContext.getInstance();
+    const session = context.getCurrentSession();
+    const player = castEngineState.remotePlayer;
+    const controller = castEngineState.remoteController;
+
+    if (command === 'disconnect') {
+      if (session) session.endSession(true);
+      castEngineState.isConnected = false;
+      syncAllCastButtonsUI();
+      closeAppModal();
+      return;
+    }
+
+    if (!player || !controller || !player.isConnected) return;
+
+    if (command === 'togglePlay') {
+      controller.playOrPause();
+    } else if (command === 'rewind10') {
+      player.currentTime = Math.max(0, (player.currentTime || 0) - 10);
+      controller.seek();
+    } else if (command === 'forward10') {
+      player.currentTime = (player.currentTime || 0) + 10;
+      controller.seek();
+    }
+  } catch (err) {
+    console.warn('Erro no controle remoto Chromecast:', err);
+  }
+}
+

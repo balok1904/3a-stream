@@ -990,6 +990,85 @@ let activeUpstreamAbort = null;
 let activeUpstreamNodeStream = null;
 let activeUpstreamTargetUrl = null;
 const vodRedirectCache = new Map();
+const os = require('os');
+
+function getServerLanIp() {
+  try {
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name] || []) {
+        if (net.family === 'IPv4' && !net.internal && (net.address.startsWith('192.168.') || net.address.startsWith('10.') || net.address.startsWith('172.'))) {
+          return net.address;
+        }
+      }
+    }
+  } catch (_) {}
+  return '';
+}
+
+app.get('/api/network-info', (req, res) => {
+  const lanIp = getServerLanIp();
+  res.json({
+    ok: true,
+    lanIp,
+    lanOrigin: lanIp ? `http://${lanIp}:${PORT}` : ''
+  });
+});
+
+// Resolve URL direta / CDN (seguindo redirecionamento 302) e URL de Proxy na rede Wi-Fi para o Chromecast
+app.get('/api/proxy/resolve-cast-url', async (req, res) => {
+  const targetUrl = String(req.query.url || '').trim();
+  if (!targetUrl || !isSafeExternalStreamUrl(targetUrl)) {
+    return res.status(400).json({ ok: false, error: 'URL inválida.' });
+  }
+
+  const lanIp = getServerLanIp();
+  const lanOrigin = lanIp ? `http://${lanIp}:${PORT}` : `${req.protocol}://${req.get('host')}`;
+  const lanProxyUrl = `${lanOrigin}/api/proxy/stream?url=${encodeURIComponent(targetUrl)}`;
+
+  const cached = vodRedirectCache.get(targetUrl);
+  if (cached && Date.now() - cached.ts < 5 * 60 * 1000) {
+    return res.json({
+      ok: true,
+      resolvedUrl: cached.url,
+      lanProxyUrl
+    });
+  }
+
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const upstream = await fetch(targetUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'IPTVSmartersPlayer',
+        'Accept': '*/*',
+        'Range': 'bytes=0-1'
+      },
+      redirect: 'follow',
+      signal: ctrl.signal
+    });
+    clearTimeout(timer);
+    const finalUrl = upstream.url || targetUrl;
+    try {
+      if (upstream.body) upstream.body.cancel();
+    } catch (_) {}
+    if (finalUrl && finalUrl !== targetUrl) {
+      vodRedirectCache.set(targetUrl, { url: finalUrl, ts: Date.now() });
+    }
+    return res.json({
+      ok: true,
+      resolvedUrl: finalUrl,
+      lanProxyUrl
+    });
+  } catch (err) {
+    return res.json({
+      ok: true,
+      resolvedUrl: targetUrl,
+      lanProxyUrl
+    });
+  }
+});
 
 // Proxy de Stream Anti-CORS para listas reais (.ts, .m3u8 e .mp4)
 app.get('/api/proxy/stream', async (req, res) => {

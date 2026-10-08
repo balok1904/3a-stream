@@ -14,7 +14,9 @@ import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.provider.Settings;
 import android.webkit.DownloadListener;
+import android.webkit.JavascriptInterface;
 import android.webkit.URLUtil;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -26,11 +28,14 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.Inet4Address;
 import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.util.Enumeration;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class MainActivity extends BridgeActivity {
@@ -65,6 +70,96 @@ public class MainActivity extends BridgeActivity {
         startLocalStreamProxyServer();
     }
 
+    private String detectDeviceWifiIpAddress() {
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            while (interfaces.hasMoreElements()) {
+                NetworkInterface nif = interfaces.nextElement();
+                if (nif == null || nif.isLoopback() || !nif.isUp()) continue;
+                String name = nif.getName() != null ? nif.getName().toLowerCase() : "";
+                Enumeration<InetAddress> addrs = nif.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    InetAddress addr = addrs.nextElement();
+                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
+                        String ip = addr.getHostAddress();
+                        if (ip != null && (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.") || name.contains("wlan") || name.contains("eth"))) {
+                            return ip;
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return "127.0.0.1";
+    }
+
+    public class AndroidCastBridge {
+        @JavascriptInterface
+        public String getWifiLanIp() {
+            return detectDeviceWifiIpAddress();
+        }
+
+        @JavascriptInterface
+        public String getLanProxyBaseUrl() {
+            String ip = detectDeviceWifiIpAddress();
+            return "http://" + ip + ":" + LOCAL_PROXY_PORT;
+        }
+
+        @JavascriptInterface
+        public String getCachedRedirectUrl(String rawUrl) {
+            if (rawUrl == null) return "";
+            String clean = rawUrl.trim().replace(" ", "%20");
+            return vodRedirectCache.getOrDefault(clean, clean);
+        }
+
+        @JavascriptInterface
+        public boolean launchExternalCastIntent(String streamUrl, String title, String mimeType) {
+            try {
+                if (streamUrl == null || streamUrl.isEmpty()) return false;
+                String resolvedMime = (mimeType != null && !mimeType.isEmpty()) ? mimeType : "video/*";
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                Uri uri = Uri.parse(streamUrl);
+                intent.setDataAndType(uri, resolvedMime);
+                if (title != null && !title.isEmpty()) {
+                    intent.putExtra("title", title);
+                    intent.putExtra(Intent.EXTRA_TITLE, title);
+                }
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                Intent chooser = Intent.createChooser(intent, "Transmitir para Chromecast / Smart TV");
+                chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(chooser);
+                return true;
+            } catch (Exception e) {
+                try {
+                    Intent fallback = new Intent(Intent.ACTION_VIEW, Uri.parse(streamUrl));
+                    fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(fallback);
+                    return true;
+                } catch (Exception ignored) {
+                    return false;
+                }
+            }
+        }
+
+        @JavascriptInterface
+        public boolean openSystemCastSettings() {
+            try {
+                Intent castIntent = new Intent(Settings.ACTION_CAST_SETTINGS);
+                castIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(castIntent);
+                return true;
+            } catch (Exception e) {
+                try {
+                    Intent wifiDisplay = new Intent("android.settings.WIFI_DISPLAY_SETTINGS");
+                    wifiDisplay.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(wifiDisplay);
+                    return true;
+                } catch (Exception ignored) {
+                    return false;
+                }
+            }
+        }
+    }
+
     private void configureWebViewForVideoPlayback() {
         try {
             if (getBridge() != null && getBridge().getWebView() != null) {
@@ -73,6 +168,7 @@ public class MainActivity extends BridgeActivity {
                 settings.setMediaPlaybackRequiresUserGesture(false);
                 settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                 settings.setDomStorageEnabled(true);
+                webView.addJavascriptInterface(new AndroidCastBridge(), "AndroidCastBridge");
 
                 webView.setDownloadListener(new DownloadListener() {
                     @Override
@@ -91,7 +187,7 @@ public class MainActivity extends BridgeActivity {
                                 fileName = fileName + ".mp4";
                             }
                             // Se for URL do proxy local 127.0.0.1:34567, extrai a URL remota para o DownloadManager do sistema Android
-                            if (url != null && url.contains("127.0.0.1:34567/proxy") && url.contains("url=")) {
+                            if (url != null && url.contains(":34567/proxy") && url.contains("url=")) {
                                 int uIdx = url.indexOf("url=") + 4;
                                 String rawU = url.substring(uIdx).split("&")[0];
                                 String decodedU = URLDecoder.decode(rawU, "UTF-8");
@@ -123,9 +219,9 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * Servidor Proxy HTTP Local embarcado no próprio APK Android (127.0.0.1:34567).
-     * Resolve 100% dos Canais Live (.ts/.m3u8), Filmes VOD e Séries que redirecionam via 302
-     * mantendo controle estrito de 1 conexão ativa (max_connections=1) e cabeçalhos CORS.
+     * Servidor Proxy HTTP Local embarcado no próprio APK Android (0.0.0.0:34567).
+     * Atende tanto o próprio aparelho (127.0.0.1:34567) quanto o Chromecast / Smart TV
+     * na mesma rede Wi-Fi (http://<IP_WIFI>:34567/proxy?url=...), resolvendo 302 e CORS.
      */
     private synchronized void startLocalStreamProxyServer() {
         if (localProxyServer != null && !localProxyServer.isClosed()) {
@@ -133,7 +229,7 @@ public class MainActivity extends BridgeActivity {
         }
         Thread serverThread = new Thread(() -> {
             try {
-                localProxyServer = new ServerSocket(LOCAL_PROXY_PORT, 32, InetAddress.getByName("127.0.0.1"));
+                localProxyServer = new ServerSocket(LOCAL_PROXY_PORT, 32, InetAddress.getByName("0.0.0.0"));
                 while (!localProxyServer.isClosed()) {
                     final Socket client = localProxyServer.accept();
                     Thread worker = new Thread(() -> handleProxyClient(client));
