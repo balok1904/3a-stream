@@ -587,7 +587,7 @@
             <!-- BARRA INFERIOR DE TIMELINE DO PLAYER (SUBSTITUI O CONTROLE NATIVO QUE DUPLICAVA O BOTÃO DE PLAY) -->
             <div class="cinema-bottom-bar" id="cinemaBottomBar" onclick="event.stopPropagation()">
               <span class="cinema-time-lbl" id="cinemaTimeCurrent">00:00</span>
-              <input type="range" class="cinema-seek-slider focusable" id="cinemaSeekSlider" min="0" max="1000" value="0" step="1" oninput="handleCinemaTimelineInput(event)" onchange="handleCinemaTimelineCommit(event)" />
+              <input type="range" class="cinema-seek-slider focusable" id="cinemaSeekSlider" min="0" max="1000" value="0" step="1" onpointerdown="handleCinemaTimelinePointerDown(event)" ontouchstart="handleCinemaTimelinePointerDown(event)" onmousedown="handleCinemaTimelinePointerDown(event)" oninput="handleCinemaTimelineInput(this.value, event)" onchange="handleCinemaTimelineCommit(this.value, event)" />
               <span class="cinema-time-lbl" id="cinemaTimeDuration">00:00</span>
               <button type="button" class="cinema-mute-btn focusable" id="btnCinemaMute" onclick="toggleCinemaMute(event)" title="Mudo / Som">🔊</button>
             </div>

@@ -2353,7 +2353,8 @@ dialog.app-dialog::backdrop {
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
-.cinema-bottom-bar.bottombar-hidden {
+.cinema-bottom-bar.bottombar-hidden,
+.cinema-bottom-bar.bar-hidden {
   opacity: 0;
   transform: translateY(100%);
   pointer-events: none;
@@ -2364,7 +2365,7 @@ dialog.app-dialog::backdrop {
   font-weight: 700;
   color: #e2e8f0;
   font-variant-numeric: tabular-nums;
-  min-width: 42px;
+  min-width: 46px;
   text-align: center;
   flex-shrink: 0;
 }
@@ -2373,22 +2374,24 @@ dialog.app-dialog::backdrop {
   flex: 1;
   -webkit-appearance: none;
   appearance: none;
-  height: 5px;
+  height: 7px;
   border-radius: 999px;
-  background: rgba(148, 163, 184, 0.35);
+  background: linear-gradient(90deg, #38bdf8 0%, #38bdf8 var(--seek-pct, 0%), rgba(148, 163, 184, 0.35) var(--seek-pct, 0%), rgba(148, 163, 184, 0.35) 100%);
   outline: none;
   cursor: pointer;
+  touch-action: none;
+  margin: 8px 0;
 }
 
 .cinema-seek-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
   border-radius: 50%;
   background: #38bdf8;
-  border: 2px solid #ffffff;
-  box-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
+  border: 2.5px solid #ffffff;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.85);
   cursor: pointer;
 }
 

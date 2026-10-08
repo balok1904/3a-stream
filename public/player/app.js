@@ -1231,6 +1231,70 @@ function setCinemaBufferingState(isBuffering) {
   }
 }
 
+let timelineSeekLockUntilMs = 0;
+
+function getEffectiveCinemaDuration(cinemaVideo) {
+  if (!cinemaVideo) return 0;
+  const dur = Number(cinemaVideo.duration);
+  if (Number.isFinite(dur) && dur > 0) return dur;
+  try {
+    if (cinemaVideo.seekable && cinemaVideo.seekable.length > 0) {
+      const seekEnd = Number(cinemaVideo.seekable.end(cinemaVideo.seekable.length - 1));
+      if (Number.isFinite(seekEnd) && seekEnd > 0) return seekEnd;
+    }
+  } catch (_) {}
+  if (currentCinemaContext.mode === 'series' && currentCinemaContext.episode && currentCinemaContext.episode.duration) {
+    const parsed = parseFallbackDurationSeconds(currentCinemaContext.episode.duration, 0);
+    if (parsed > 0) return parsed;
+  }
+  if (currentCinemaContext.mode === 'vod' && currentCinemaContext.item && currentCinemaContext.item.duration) {
+    const parsed = parseFallbackDurationSeconds(currentCinemaContext.item.duration, 0);
+    if (parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function extractTimelinePermille(sliderValOrEvent, maybeEvent) {
+  const slider = document.getElementById('cinemaSeekSlider');
+  if (typeof sliderValOrEvent === 'number' || typeof sliderValOrEvent === 'string') {
+    const num = Number(sliderValOrEvent);
+    if (Number.isFinite(num)) {
+      return Math.min(1000, Math.max(0, Math.round(num)));
+    }
+  }
+  const ev = (sliderValOrEvent && typeof sliderValOrEvent === 'object') ? sliderValOrEvent : maybeEvent;
+  if (ev && ev.target && ev.target.value !== undefined) {
+    const num = Number(ev.target.value);
+    if (Number.isFinite(num)) {
+      return Math.min(1000, Math.max(0, Math.round(num)));
+    }
+  }
+  if (slider && slider.value !== undefined) {
+    const num = Number(slider.value);
+    if (Number.isFinite(num)) {
+      return Math.min(1000, Math.max(0, Math.round(num)));
+    }
+  }
+  return 0;
+}
+
+function computePermilleFromPointerPosition(ev, sliderEl) {
+  if (!ev || !sliderEl) return null;
+  let clientX = null;
+  if (ev.touches && ev.touches.length > 0) {
+    clientX = ev.touches[0].clientX;
+  } else if (ev.changedTouches && ev.changedTouches.length > 0) {
+    clientX = ev.changedTouches[0].clientX;
+  } else if (typeof ev.clientX === 'number') {
+    clientX = ev.clientX;
+  }
+  if (typeof clientX !== 'number') return null;
+  const rect = sliderEl.getBoundingClientRect();
+  if (!rect || rect.width <= 0) return null;
+  const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  return Math.round(ratio * 1000);
+}
+
 function syncCinemaBottomTimeline() {
   const cinemaVideo = document.getElementById('cinemaVideoElement');
   const curEl = document.getElementById('cinemaTimeCurrent');
@@ -1238,56 +1302,127 @@ function syncCinemaBottomTimeline() {
   const slider = document.getElementById('cinemaSeekSlider');
   if (!cinemaVideo || !curEl || !durEl || !slider) return;
 
-  const cur = Number(cinemaVideo.currentTime || 0);
-  const dur = Number(cinemaVideo.duration || 0);
-  curEl.textContent = formatClockTime(cur);
-
-  if (Number.isFinite(dur) && dur > 0) {
+  const dur = getEffectiveCinemaDuration(cinemaVideo);
+  if (dur > 0) {
     durEl.textContent = formatClockTime(dur);
-    if (!isUserDraggingTimeline) {
-      const val = Math.min(1000, Math.max(0, Math.round((cur / dur) * 1000)));
-      slider.value = String(val);
-      slider.style.setProperty('--seek-pct', `${(val / 10).toFixed(1)}%`);
-    }
   } else {
     durEl.textContent = '--:--';
-    if (!isUserDraggingTimeline) {
-      slider.value = '0';
-      slider.style.setProperty('--seek-pct', '0%');
-    }
+  }
+
+  // Enquanto o usuário estiver clicando/arrastando a barra ou o vídeo estiver buscando o novo ponto, mantém a posição escolhida
+  if (isUserDraggingTimeline || cinemaVideo.seeking || Date.now() < timelineSeekLockUntilMs) {
+    return;
+  }
+
+  const cur = Number(cinemaVideo.currentTime || 0);
+  curEl.textContent = formatClockTime(cur);
+
+  if (dur > 0) {
+    const val = Math.min(1000, Math.max(0, Math.round((cur / dur) * 1000)));
+    slider.value = String(val);
+    slider.style.setProperty('--seek-pct', `${(val / 10).toFixed(1)}%`);
+  } else {
+    slider.value = '0';
+    slider.style.setProperty('--seek-pct', '0%');
   }
 }
 
-function handleCinemaTimelineInput(sliderVal, event) {
-  if (event && event.stopPropagation) event.stopPropagation();
-  isUserDraggingTimeline = true;
+function applyCinemaTimelineSeekPermille(permille, commitToVideo = false) {
   const cinemaVideo = document.getElementById('cinemaVideoElement');
   const curEl = document.getElementById('cinemaTimeCurrent');
   const slider = document.getElementById('cinemaSeekSlider');
-  const pct = Math.min(1000, Math.max(0, Number(sliderVal || 0)));
+  const pct = Math.min(1000, Math.max(0, Math.round(Number(permille) || 0)));
+
   if (slider) {
+    slider.value = String(pct);
     slider.style.setProperty('--seek-pct', `${(pct / 10).toFixed(1)}%`);
   }
-  if (cinemaVideo && curEl && Number.isFinite(cinemaVideo.duration) && cinemaVideo.duration > 0) {
-    const targetSec = (pct / 1000) * cinemaVideo.duration;
-    curEl.textContent = formatClockTime(targetSec);
+
+  const dur = getEffectiveCinemaDuration(cinemaVideo);
+  if (dur > 0) {
+    const targetSec = Math.max(0, Math.min(dur - 0.25, (pct / 1000) * dur));
+    if (curEl) {
+      curEl.textContent = formatClockTime(targetSec);
+    }
+    if (commitToVideo && cinemaVideo) {
+      timelineSeekLockUntilMs = Date.now() + 900;
+      try {
+        cinemaVideo.currentTime = targetSec;
+      } catch (_) {}
+      saveWatchProgressByKey(
+        currentCinemaContext.mode === 'series' && activeSeriesItem && currentCinemaContext.episode
+          ? getEpisodeProgressKey(activeSeriesItem, activeSeasonKey, currentCinemaContext.episode, activeEpisodeIndex)
+          : getVodProgressKey(currentCinemaContext.item),
+        targetSec,
+        dur
+      );
+    }
   }
-  scheduleCinemaTopbarHide();
 }
 
-function handleCinemaTimelineCommit(sliderVal, event) {
+function handleCinemaTimelinePointerDown(event) {
   if (event && event.stopPropagation) event.stopPropagation();
-  const cinemaVideo = document.getElementById('cinemaVideoElement');
-  const pct = Math.min(1000, Math.max(0, Number(sliderVal || 0)));
-  if (cinemaVideo && Number.isFinite(cinemaVideo.duration) && cinemaVideo.duration > 0) {
-    try {
-      cinemaVideo.currentTime = (pct / 1000) * cinemaVideo.duration;
-    } catch (_) {}
+  isUserDraggingTimeline = true;
+
+  const slider = document.getElementById('cinemaSeekSlider');
+  let latestPermille = computePermilleFromPointerPosition(event, slider);
+  if (latestPermille !== null) {
+    // Aplica imediatamente na posição exata clicada/tocada na barra
+    applyCinemaTimelineSeekPermille(latestPermille, true);
   }
+
+  const onMove = (moveEv) => {
+    if (!isUserDraggingTimeline) return;
+    const movePermille = computePermilleFromPointerPosition(moveEv, slider);
+    if (movePermille !== null) {
+      latestPermille = movePermille;
+      applyCinemaTimelineSeekPermille(movePermille, false);
+    }
+  };
+
+  const onRelease = (upEv) => {
+    window.removeEventListener('pointermove', onMove, true);
+    window.removeEventListener('touchmove', onMove, true);
+    window.removeEventListener('mousemove', onMove, true);
+    window.removeEventListener('pointerup', onRelease, true);
+    window.removeEventListener('touchend', onRelease, true);
+    window.removeEventListener('mouseup', onRelease, true);
+    if (isUserDraggingTimeline) {
+      const upPermille = computePermilleFromPointerPosition(upEv, slider);
+      const finalPermille = upPermille !== null
+        ? upPermille
+        : (latestPermille !== null ? latestPermille : extractTimelinePermille(slider ? slider.value : 0));
+      applyCinemaTimelineSeekPermille(finalPermille, true);
+      isUserDraggingTimeline = false;
+      scheduleCinemaTopbarHide(false);
+    }
+  };
+
+  window.addEventListener('pointermove', onMove, true);
+  window.addEventListener('touchmove', onMove, true);
+  window.addEventListener('mousemove', onMove, true);
+  window.addEventListener('pointerup', onRelease, true);
+  window.addEventListener('touchend', onRelease, true);
+  window.addEventListener('mouseup', onRelease, true);
+  scheduleCinemaTopbarHide(false);
+}
+
+function handleCinemaTimelineInput(sliderValOrEvent, maybeEvent) {
+  const ev = (sliderValOrEvent && typeof sliderValOrEvent === 'object') ? sliderValOrEvent : maybeEvent;
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  isUserDraggingTimeline = true;
+  const pct = extractTimelinePermille(sliderValOrEvent, maybeEvent);
+  applyCinemaTimelineSeekPermille(pct, false);
+  scheduleCinemaTopbarHide(false);
+}
+
+function handleCinemaTimelineCommit(sliderValOrEvent, maybeEvent) {
+  const ev = (sliderValOrEvent && typeof sliderValOrEvent === 'object') ? sliderValOrEvent : maybeEvent;
+  if (ev && ev.stopPropagation) ev.stopPropagation();
+  const pct = extractTimelinePermille(sliderValOrEvent, maybeEvent);
+  applyCinemaTimelineSeekPermille(pct, true);
   isUserDraggingTimeline = false;
-  syncCinemaBottomTimeline();
-  saveCurrentCinemaWatchProgress();
-  scheduleCinemaTopbarHide();
+  scheduleCinemaTopbarHide(false);
 }
 
 function toggleCinemaMute(event) {
@@ -1322,15 +1457,19 @@ function seekCinemaVideo(deltaSeconds, event) {
   if (!cinemaVideo) return;
   try {
     const cur = Number(cinemaVideo.currentTime || 0);
-    const dur = Number(cinemaVideo.duration);
-    const target = Number.isFinite(dur) && dur > 0
+    const dur = getEffectiveCinemaDuration(cinemaVideo);
+    const target = dur > 0
       ? Math.max(0, Math.min(dur - 0.5, cur + deltaSeconds))
       : Math.max(0, cur + deltaSeconds);
+    timelineSeekLockUntilMs = Date.now() + 700;
     cinemaVideo.currentTime = target;
+    if (dur > 0) {
+      const permille = Math.round((target / dur) * 1000);
+      applyCinemaTimelineSeekPermille(permille, false);
+    }
   } catch (_) {}
-  syncCinemaBottomTimeline();
   saveCurrentCinemaWatchProgress();
-  scheduleCinemaTopbarHide();
+  scheduleCinemaTopbarHide(false);
 }
 
 function handleCinemaSkip(delta, event) {
@@ -1358,7 +1497,7 @@ function handleCinemaSkip(delta, event) {
   }
 }
 
-function scheduleCinemaTopbarHide() {
+function scheduleCinemaTopbarHide(shouldSyncTimeline = true) {
   const topbar = document.getElementById('cinemaTopbar');
   const centerControls = document.getElementById('cinemaCenterControls');
   const bottomBar = document.getElementById('cinemaBottomBar');
@@ -1370,7 +1509,9 @@ function scheduleCinemaTopbarHide() {
     bottomBar.classList.remove('bar-hidden');
   }
   syncCenterPlayPauseIcon();
-  syncCinemaBottomTimeline();
+  if (shouldSyncTimeline && !isUserDraggingTimeline) {
+    syncCinemaBottomTimeline();
+  }
 
   clearTimeout(cinemaTopbarTimer);
   cinemaTopbarTimer = setTimeout(() => {
@@ -1399,9 +1540,12 @@ function initCinemaTouchWakeup() {
   const cinemaVideo = document.getElementById('cinemaVideoElement');
   const liveVideo = document.getElementById('iptvVideoPlayer');
 
-  const wakeTopbarOnTouch = () => {
+  const wakeTopbarOnTouch = (e) => {
     if (appState.currentScreen === 'screenCinemaPlayer') {
-      scheduleCinemaTopbarHide();
+      const isTouchingBottomBar = Boolean(
+        e && e.target && typeof e.target.closest === 'function' && e.target.closest('#cinemaBottomBar')
+      );
+      scheduleCinemaTopbarHide(!isTouchingBottomBar);
     }
   };
 
