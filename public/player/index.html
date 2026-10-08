@@ -393,7 +393,7 @@
             <!-- PLAYER INTEGRADO HLS + DETALHES EPG (PARA TV AO VIVO / FUTEBOL) -->
             <div class="catalog-player-panel" id="catalogPlayerPanel">
               <div class="video-box">
-                <video id="iptvVideoPlayer" controls controlsList="nofullscreen" playsinline crossorigin="anonymous"></video>
+                <video id="iptvVideoPlayer" controls controlsList="nofullscreen" playsinline></video>
                 <div id="videoIdlePlaceholder" class="video-idle-placeholder">
                   <img src="logo-3a-stream.jpg" alt="3A Stream" class="idle-logo" />
                   <span>Selecione um canal ao lado para assistir ao vivo</span>
@@ -410,9 +410,6 @@
                         <line x1="2" y1="20" x2="2.01" y2="20"/>
                       </svg>
                       <span>Chromecast</span>
-                    </button>
-                    <button type="button" class="btn-audio-boost focusable" id="btnCatalogAudioBoost" onclick="cycleAudioBoostMode()" title="Normalizador de Voz 5.1 Surround e Amplificador de Volume">
-                      🔊 Voz 5.1 (180%)
                     </button>
                     <button type="button" class="btn-fullscreen focusable" onclick="openCurrentLiveInCinema()">⛶ Tela Cheia 100%</button>
                   </div>
@@ -520,9 +517,6 @@
               <button type="button" class="cinema-ctrl-btn cinema-ctrl-download focusable" id="btnCinemaDownloadMp4" onclick="downloadCurrentCinemaVideo(event)" title="Baixar vídeo em MP4">
                 ⬇️ Baixar MP4
               </button>
-              <button type="button" class="cinema-ctrl-btn cinema-ctrl-audio focusable" id="btnCinemaAudioBoost" onclick="cycleAudioBoostMode()" title="Corrige áudio baixo 5.1 Surround realçando vozes e normalizando volume">
-                🔊 Voz 5.1 (180%)
-              </button>
               <button type="button" class="cinema-ctrl-btn focusable" id="btnCinemaAspectRatio" onclick="cycleVideoAspectRatio()" title="Alternar formato de preenchimento da tela">
                 📐 Tela: Preencher 100%
               </button>
@@ -540,7 +534,7 @@
 
           <!-- ÁREA DO VÍDEO 100% TELA CHEIA + CONTROLES CENTRAIS + BARRA INFERIOR DE PROGRESSO + GAVETA LATERAL DE EPISÓDIOS -->
           <div class="cinema-stage">
-            <video id="cinemaVideoElement" class="video-fit-fill" playsinline crossorigin="anonymous"></video>
+            <video id="cinemaVideoElement" class="video-fit-fill" playsinline></video>
 
             <!-- CONTROLES CENTRAIS DE REPRODUÇÃO (CONFORME PRINT 3: -10s, ANTERIOR, PLAY/PAUSE, PRÓXIMO, +10s) -->
             <div class="cinema-center-controls" id="cinemaCenterControls">
