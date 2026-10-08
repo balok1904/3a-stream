@@ -7,8 +7,22 @@ const { Readable } = require('stream');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Range, Accept');
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  next();
+});
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
+
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, localProxy: true });
+});
 
 // Diretório de dados persistentes
 const DATA_DIR = path.join(__dirname, 'data');
@@ -838,22 +852,33 @@ app.post('/api/player/series-info', async (req, res) => {
 
 // Mantém controle do stream ativo para fechar conexões antigas imediatamente (essencial para listas de 1 conexão)
 let activeUpstreamAbort = null;
+let activeUpstreamNodeStream = null;
+let activeUpstreamTargetUrl = null;
+const vodRedirectCache = new Map();
 
 // Proxy de Stream Anti-CORS para listas reais (.ts, .m3u8 e .mp4)
 app.get('/api/proxy/stream', async (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl) return res.status(400).send('Missing url');
 
-  // Sempre encerra qualquer stream .ts ao vivo anterior para liberar o slot de 1 conexão no servidor IPTV
-  if (activeUpstreamAbort) {
-    try { activeUpstreamAbort.abort(); } catch (_) {}
-    activeUpstreamAbort = null;
+  const isVodOrSeries = targetUrl.includes('/movie/') || targetUrl.includes('/series/') || targetUrl.endsWith('.mp4') || targetUrl.endsWith('.mkv');
+  const isSameVodTarget = isVodOrSeries && activeUpstreamTargetUrl === targetUrl;
+
+  // Encerra imediatamente o stream anterior ao trocar de canal/filme/episódio ou em canais ao vivo (respeita max_connections=1 sem quebrar múltiplos Range requests do mesmo MP4)
+  if (!isSameVodTarget) {
+    if (activeUpstreamNodeStream) {
+      try { activeUpstreamNodeStream.destroy(); } catch (_) {}
+      activeUpstreamNodeStream = null;
+    }
+    if (activeUpstreamAbort) {
+      try { activeUpstreamAbort.abort(); } catch (_) {}
+      activeUpstreamAbort = null;
+    }
   }
 
   const abortController = new AbortController();
-  if (targetUrl.endsWith('.ts') && !targetUrl.includes('/movie/') && !targetUrl.includes('/series/')) {
-    activeUpstreamAbort = abortController;
-  }
+  activeUpstreamAbort = abortController;
+  activeUpstreamTargetUrl = targetUrl;
 
   req.on('close', () => {
     try { abortController.abort(); } catch (_) {}
@@ -869,18 +894,41 @@ app.get('/api/proxy/stream', async (req, res) => {
       headers['Range'] = req.headers.range;
     }
 
-    const upstream = await fetch(targetUrl, {
+    // Reutiliza URL final de redirecionamento em cache para Filmes e Séries (evita gerar múltiplos tokens em Range requests simultâneos)
+    let fetchUrl = targetUrl;
+    const cachedRedirect = vodRedirectCache.get(targetUrl);
+    if (cachedRedirect && Date.now() - cachedRedirect.ts < 5 * 60 * 1000) {
+      fetchUrl = cachedRedirect.url;
+    }
+
+    let upstream = await fetch(fetchUrl, {
       headers,
       redirect: 'follow',
       signal: abortController.signal
     });
+
+    // Se o token em cache expirou, refaz a partir da URL original
+    if (!upstream.ok && upstream.status !== 206 && fetchUrl !== targetUrl) {
+      vodRedirectCache.delete(targetUrl);
+      fetchUrl = targetUrl;
+      upstream = await fetch(targetUrl, {
+        headers,
+        redirect: 'follow',
+        signal: abortController.signal
+      });
+    }
 
     if (!upstream.ok && upstream.status !== 206) {
       return res.status(upstream.status).send(`Upstream error: ${upstream.status}`);
     }
 
     const contentType = upstream.headers.get('content-type') || '';
-    const finalUrl = upstream.url || targetUrl;
+    const finalUrl = upstream.url || fetchUrl;
+    if (finalUrl && finalUrl !== targetUrl && isVodOrSeries) {
+      vodRedirectCache.set(targetUrl, { url: finalUrl, ts: Date.now() });
+    }
+
+    const proxyHostPrefix = `${req.protocol}://${req.get('host')}`;
 
     // Se for playlist HLS (.m3u8), reescreve os caminhos relativos para passarem pelo proxy
     if (
@@ -904,7 +952,7 @@ app.get('/api/proxy/stream', async (req, res) => {
           } else {
             absUrl = `${basePath}${trimmed}`;
           }
-          return `/api/proxy/stream?url=${encodeURIComponent(absUrl)}`;
+          return `${proxyHostPrefix}/api/proxy/stream?url=${encodeURIComponent(absUrl)}`;
         })
         .join('\n');
 
@@ -934,9 +982,15 @@ app.get('/api/proxy/stream', async (req, res) => {
     }
     res.setHeader('Content-Type', resolvedMime);
 
-    const acceptRanges = upstream.headers.get('accept-ranges');
-    if (acceptRanges || urlLower.includes('.mp4') || urlLower.includes('.mkv') || urlLower.includes('/movie/') || urlLower.includes('/series/')) {
-      res.setHeader('Accept-Ranges', acceptRanges || 'bytes');
+    // Sempre normaliza Accept-Ranges para 'bytes' (corrige servidores XUI que enviam '0-735130532' inválido)
+    if (
+      upstream.headers.get('accept-ranges') ||
+      urlLower.includes('.mp4') ||
+      urlLower.includes('.mkv') ||
+      urlLower.includes('/movie/') ||
+      urlLower.includes('/series/')
+    ) {
+      res.setHeader('Accept-Ranges', 'bytes');
     }
     const contentLength = upstream.headers.get('content-length');
     if (contentLength) res.setHeader('Content-Length', contentLength);
@@ -945,6 +999,7 @@ app.get('/api/proxy/stream', async (req, res) => {
 
     if (upstream.body) {
       const nodeStream = Readable.fromWeb(upstream.body);
+      activeUpstreamNodeStream = nodeStream;
       nodeStream.on('error', () => {
         if (!res.writableEnded) res.end();
       });

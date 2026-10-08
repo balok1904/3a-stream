@@ -24,10 +24,15 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class MainActivity extends BridgeActivity {
     private static ServerSocket localProxyServer = null;
     private static final int LOCAL_PROXY_PORT = 34567;
+    private static volatile HttpURLConnection activeStreamConn = null;
+    private static volatile Socket activeStreamSocket = null;
+    private static volatile String activeTargetUrl = null;
+    private static final ConcurrentHashMap<String, String> vodRedirectCache = new ConcurrentHashMap<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -67,9 +72,8 @@ public class MainActivity extends BridgeActivity {
 
     /**
      * Servidor Proxy HTTP Local embarcado no próprio APK Android (127.0.0.1:34567).
-     * Resolve 100% dos Filmes VOD (ex: r2-auth.atlaspainel.net) que redirecionam via 302
-     * sem cabeçalhos CORS (Access-Control-Allow-Origin) e sem Content-Type: video/mp4,
-     * permitindo reprodução imediata com suporte a Range (avançar/retroceder) e Áudio 5.1.
+     * Resolve 100% dos Canais Live (.ts/.m3u8), Filmes VOD e Séries que redirecionam via 302
+     * mantendo controle estrito de 1 conexão ativa (max_connections=1) e cabeçalhos CORS.
      */
     private synchronized void startLocalStreamProxyServer() {
         if (localProxyServer != null && !localProxyServer.isClosed()) {
@@ -90,8 +94,22 @@ public class MainActivity extends BridgeActivity {
         serverThread.start();
     }
 
+    private void closePreviousActiveStream() {
+        HttpURLConnection prevConn = activeStreamConn;
+        Socket prevSock = activeStreamSocket;
+        activeStreamConn = null;
+        activeStreamSocket = null;
+        if (prevSock != null) {
+            try { prevSock.close(); } catch (Exception ignored) {}
+        }
+        if (prevConn != null) {
+            try { prevConn.disconnect(); } catch (Exception ignored) {}
+        }
+    }
+
     private void handleProxyClient(Socket client) {
         HttpURLConnection conn = null;
+        boolean isApiCall = false;
         try {
             client.setSoTimeout(30000);
             InputStream clientIn = client.getInputStream();
@@ -147,15 +165,33 @@ public class MainActivity extends BridgeActivity {
                 return;
             }
 
-            // Segue até 6 redirecionamentos (301/302/303/307/308) preservando User-Agent e cabeçalho Range
-            String currentUrl = targetUrl.trim().replace(" ", "%20");
+            String cleanTarget = targetUrl.trim().replace(" ", "%20");
+            boolean isVodOrSeries = cleanTarget.contains("/movie/") || cleanTarget.contains("/series/") || cleanTarget.endsWith(".mp4") || cleanTarget.endsWith(".mkv");
+            isApiCall = cleanTarget.contains("player_api.php");
+
+            if (!isApiCall) {
+                boolean isSameVodTarget = isVodOrSeries && cleanTarget.equals(activeTargetUrl);
+                if (!isSameVodTarget) {
+                    // Libera imediatamente qualquer stream de outro canal/filme para respeitar max_connections=1
+                    closePreviousActiveStream();
+                }
+                activeTargetUrl = cleanTarget;
+                activeStreamSocket = client;
+            }
+
+            String currentUrl = vodRedirectCache.getOrDefault(cleanTarget, cleanTarget);
+
+            // Segue até 6 redirecionamentos (301/302/303/307/308) sempre usando GET (evita Content-Length: 0 em HEAD no Cloudflare)
             for (int redirectCount = 0; redirectCount < 6; redirectCount++) {
                 URL urlObj = new URL(currentUrl);
                 conn = (HttpURLConnection) urlObj.openConnection();
+                if (!isApiCall) {
+                    activeStreamConn = conn;
+                }
                 conn.setInstanceFollowRedirects(false);
                 conn.setConnectTimeout(15000);
                 conn.setReadTimeout(30000);
-                conn.setRequestMethod("HEAD".equalsIgnoreCase(method) ? "HEAD" : "GET");
+                conn.setRequestMethod("GET");
                 conn.setRequestProperty("User-Agent", "IPTVSmartersPlayer");
                 conn.setRequestProperty("Accept", "*/*");
                 conn.setRequestProperty("Connection", "keep-alive");
@@ -174,6 +210,14 @@ public class MainActivity extends BridgeActivity {
                     } else {
                         currentUrl = location;
                     }
+                    if (isVodOrSeries || currentUrl.contains("atlaspainel") || currentUrl.contains("/vauth/")) {
+                        vodRedirectCache.put(cleanTarget, currentUrl);
+                    }
+                } else if (code >= 400 && !currentUrl.equals(cleanTarget)) {
+                    // Se o link em cache expirou, limpa o cache e tenta novamente do link original
+                    vodRedirectCache.remove(cleanTarget);
+                    conn.disconnect();
+                    currentUrl = cleanTarget;
                 } else {
                     break;
                 }
@@ -182,13 +226,14 @@ public class MainActivity extends BridgeActivity {
             int status = conn.getResponseCode();
             String statusText = status == 206 ? "Partial Content" : (status == 200 ? "OK" : "Upstream");
             String contentType = conn.getContentType();
-            String lowerUrl = (currentUrl + " " + targetUrl).toLowerCase();
+            String lowerUrl = (currentUrl + " " + cleanTarget).toLowerCase();
 
-            // Servidores VOD como r2-auth.atlaspainel.net não enviam Content-Type; definimos video/mp4 explicitamente
-            if (contentType == null || contentType.isEmpty() || contentType.contains("octet-stream") || contentType.contains("text/html") || contentType.contains("text/plain")) {
+            if (isApiCall) {
+                contentType = "application/json; charset=utf-8";
+            } else if (contentType == null || contentType.isEmpty() || contentType.contains("octet-stream") || contentType.contains("text/html") || contentType.contains("text/plain")) {
                 if (lowerUrl.contains(".mkv")) {
                     contentType = "video/x-matroska";
-                } else if (lowerUrl.contains(".ts") && !lowerUrl.contains(".mp4") && !lowerUrl.contains("/movie/")) {
+                } else if (lowerUrl.contains(".ts") && !lowerUrl.contains(".mp4") && !lowerUrl.contains("/movie/") && !lowerUrl.contains("/series/")) {
                     contentType = "video/mp2t";
                 } else if (lowerUrl.contains(".m3u8")) {
                     contentType = "application/vnd.apple.mpegurl";
@@ -199,14 +244,16 @@ public class MainActivity extends BridgeActivity {
 
             String contentLength = conn.getHeaderField("Content-Length");
             String contentRange = conn.getHeaderField("Content-Range");
-            String acceptRanges = conn.getHeaderField("Accept-Ranges");
 
             StringBuilder respHeaders = new StringBuilder();
             respHeaders.append("HTTP/1.1 ").append(status).append(" ").append(statusText).append("\r\n");
             respHeaders.append("Content-Type: ").append(contentType).append("\r\n");
             respHeaders.append("Access-Control-Allow-Origin: *\r\n");
             respHeaders.append("Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges\r\n");
-            respHeaders.append("Accept-Ranges: ").append(acceptRanges != null ? acceptRanges : "bytes").append("\r\n");
+            if (!isApiCall) {
+                // Sempre envia 'bytes' válido (corrige XUI One que envia '0-735130532')
+                respHeaders.append("Accept-Ranges: bytes\r\n");
+            }
             if (contentLength != null) {
                 respHeaders.append("Content-Length: ").append(contentLength).append("\r\n");
             }

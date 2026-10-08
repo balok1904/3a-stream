@@ -56,8 +56,38 @@ const IS_NATIVE_APK = Boolean(
 const DEFAULT_CLOUD_BACKEND = 'https://app-3a-stream.onrender.com';
 const DEFAULT_LAN_BACKEND = localStorage.getItem('3a_backend_url') || DEFAULT_CLOUD_BACKEND;
 
+let LOCAL_PC_PROXY_BASE = (
+  !IS_NATIVE_APK &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname.startsWith('192.168.'))
+) ? window.location.origin : '';
+
+async function detectLocalPcProxy() {
+  if (IS_NATIVE_APK || LOCAL_PC_PROXY_BASE) return LOCAL_PC_PROXY_BASE;
+  const candidates = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+  for (const base of candidates) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 1200);
+      const res = await fetch(`${base}/api/health`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        LOCAL_PC_PROXY_BASE = base;
+        return base;
+      }
+    } catch (_) {}
+  }
+  return '';
+}
+detectLocalPcProxy();
+
 async function apiFetch(path, options = {}) {
   if (!IS_NATIVE_APK) {
+    if (LOCAL_PC_PROXY_BASE && (path.startsWith('/api/proxy/') || path.startsWith('/api/player/series-info'))) {
+      try {
+        const localRes = await fetch(`${LOCAL_PC_PROXY_BASE}${path}`, options);
+        if (localRes.ok) return localRes;
+      } catch (_) {}
+    }
     return fetch(path, options);
   }
   const savedUrl = localStorage.getItem('3a_backend_url');
@@ -1250,6 +1280,14 @@ function applyAudioBoostPreset(presetIdx, notify = true) {
 }
 
 function cycleAudioBoostMode() {
+  const cinemaV = document.getElementById('cinemaVideoElement');
+  const liveV = document.getElementById('iptvVideoPlayer');
+  [cinemaV, liveV].forEach(v => {
+    if (v && v.src && (v.src.includes('127.0.0.1') || v.src.includes('localhost') || v.src.includes('/api/proxy/stream'))) {
+      v.setAttribute('crossorigin', 'anonymous');
+      ensureVideoAudioNormalizer(v);
+    }
+  });
   const nextIdx = (currentAudioPresetIndex + 1) % AUDIO_BOOST_PRESETS.length;
   applyAudioBoostPreset(nextIdx, true);
   scheduleCinemaTopbarHide();
@@ -1267,13 +1305,68 @@ function extractRawStreamUrl(streamUrl, item = {}) {
       if (/^https?:\/\//i.test(decoded)) return decoded;
     } catch (_) {}
   }
+  if (item && item.stream_id && appState.catalog && appState.catalog.xtreamOrigin) {
+    const { baseUrl, username, password } = appState.catalog.xtreamOrigin;
+    const cleanBase = String(baseUrl || '').trim().replace(/\/+$/, '');
+    if (cleanBase && username && password) {
+      if (appState.currentSection === 'vod') {
+        const ext = (item.duration || 'mp4').toLowerCase();
+        return `${cleanBase}/movie/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${item.stream_id}.${ext}`;
+      }
+      const ext = appState.preferences.streamFormat === 'm3u8' ? 'm3u8' : 'ts';
+      return `${cleanBase}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${item.stream_id}.${ext}`;
+    }
+  }
   return streamUrl || '';
+}
+
+function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
+  const candidates = [];
+  const addUnique = (u) => {
+    if (u && !candidates.includes(u)) candidates.push(u);
+  };
+
+  if (IS_NATIVE_APK && /^https?:\/\//i.test(rawStreamUrl)) {
+    // No APK Android, 100% dos streams (Live, VOD e Séries) passam pelo Proxy Nativo Local (127.0.0.1:34567) no IP brasileiro do aparelho!
+    addUnique(`http://127.0.0.1:34567/proxy?url=${encodeURIComponent(rawStreamUrl)}`);
+    addUnique(rawStreamUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/'));
+    addUnique(rawStreamUrl);
+    return candidates;
+  }
+
+  // No navegador Web: se o servidor local do PC (localhost:3000) estiver ativo, usa ele como prioridade máxima (IP brasileiro sem bloqueio 403!)
+  if (LOCAL_PC_PROXY_BASE && /^https?:\/\//i.test(rawStreamUrl)) {
+    addUnique(`${LOCAL_PC_PROXY_BASE}/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+  }
+
+  if (/^https?:\/\//i.test(rawStreamUrl)) {
+    // Se estiver hospedado no Render (HTTPS) sem localhost:3000, tenta também localhost:3000 e HTTPS direto (evita 403 do IP americano do Render)
+    if (window.location.hostname.includes('onrender.com')) {
+      if (isMovieOrSeriesVod) {
+        addUnique(rawStreamUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/'));
+      }
+      addUnique(`http://localhost:3000/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+      addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+      addUnique(rawStreamUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/'));
+      addUnique(rawStreamUrl);
+    } else {
+      addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+      addUnique(rawStreamUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/'));
+      addUnique(rawStreamUrl);
+    }
+  } else {
+    addUnique(streamUrl);
+  }
+
+  return candidates;
 }
 
 function startStreamOnVideoElement(video, streamUrl, item = {}) {
   video.muted = false;
   video.volume = 1.0;
   video.onerror = null;
+  // Remove crossorigin na carga inicial para nunca bloquear redirecionamentos 302 CDN (ex: r2-auth.atlaspainel.net)
+  video.removeAttribute('crossorigin');
 
   const rawStreamUrl = extractRawStreamUrl(streamUrl, item);
   const rawCheck = (rawStreamUrl || streamUrl || '').toLowerCase();
@@ -1281,70 +1374,47 @@ function startStreamOnVideoElement(video, streamUrl, item = {}) {
   const isTsStream = !isMovieOrSeriesVod && (rawCheck.endsWith('.ts') || (streamUrl && streamUrl.includes('.ts')));
   const isM3u8Stream = !isMovieOrSeriesVod && (rawCheck.includes('.m3u8') || (streamUrl && streamUrl.includes('.m3u8')));
 
-  let resolvedUrl = streamUrl;
-
-  if (IS_NATIVE_APK) {
-    if (isMovieOrSeriesVod && /^https?:\/\//i.test(rawStreamUrl)) {
-      // Filmes VOD (ex: r2-auth.atlaspainel.net) redirecionam via 302 sem CORS e sem Content-Type: video/mp4.
-      // O Proxy Nativo Local do APK (127.0.0.1:34567) resolve o 302 preservando Range e injeta video/mp4 + CORS!
-      resolvedUrl = `http://127.0.0.1:34567/proxy?url=${encodeURIComponent(rawStreamUrl)}`;
-    } else if (resolvedUrl && resolvedUrl.startsWith('/api/proxy/stream')) {
-      resolvedUrl = rawStreamUrl || `${DEFAULT_LAN_BACKEND}${resolvedUrl}`;
-    }
-  } else {
-    // No navegador Web PC, garante que Filmes/Séries HTTP passem pelo /api/proxy/stream
-    if (isMovieOrSeriesVod && /^https?:\/\//i.test(rawStreamUrl) && !String(resolvedUrl).startsWith('/api/proxy/stream')) {
-      resolvedUrl = `/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`;
-    }
-  }
-
-  video.setAttribute('crossorigin', 'anonymous');
-  ensureVideoAudioNormalizer(video);
+  const candidates = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod);
+  const primaryUrl = candidates[0] || streamUrl;
+  const fallbackUrls = candidates.slice(1);
 
   if (isTsStream && window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
-    startMpegTsPlayback(video, resolvedUrl);
+    startMpegTsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl);
   } else if (isM3u8Stream && window.Hls && Hls.isSupported()) {
     hlsInstance = new Hls({
       enableWorker: true,
       lowLatencyMode: true
     });
-    hlsInstance.loadSource(resolvedUrl);
+    hlsInstance.loadSource(primaryUrl);
     hlsInstance.attachMedia(video);
     hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
       video.play().catch(() => {});
     });
     hlsInstance.on(Hls.Events.ERROR, (event, data) => {
-      if (data.fatal && item.fallbackTsUrl && window.mpegts) {
-        destroyPlayers();
-        startMpegTsPlayback(video, item.fallbackTsUrl);
+      if (data.fatal) {
+        const tsRaw = rawStreamUrl ? rawStreamUrl.replace(/\.m3u8$/i, '.ts') : '';
+        const tsCands = tsRaw ? buildStreamCandidateUrls(tsRaw, item.fallbackTsUrl || '', false) : fallbackUrls;
+        if (tsCands.length > 0 && window.mpegts) {
+          destroyPlayers();
+          startMpegTsPlayback(video, tsCands[0], tsCands.slice(1), tsRaw);
+        }
       }
     });
   } else {
-    let fallbackStep = 0;
+    let candidateIdx = 0;
     video.onerror = () => {
-      if (!rawStreamUrl || !/^https?:\/\//i.test(rawStreamUrl)) return;
-      fallbackStep++;
-      if (fallbackStep === 1 && IS_NATIVE_APK) {
-        // Fallback 1: tenta via servidor LAN se disponível
-        const lanUrl = `${DEFAULT_LAN_BACKEND.replace(/\/+$/, '')}/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`;
-        if (video.src !== lanUrl) {
-          video.src = lanUrl;
-          video.load();
-          video.play().catch(() => {});
-          return;
-        }
-        fallbackStep++;
-      }
-      if (fallbackStep === 2) {
-        // Fallback 2: reprodução direta sem atributo crossorigin
-        video.onerror = null;
+      candidateIdx++;
+      if (candidateIdx < candidates.length) {
+        const nextUrl = candidates[candidateIdx];
         video.removeAttribute('crossorigin');
-        video.src = rawStreamUrl;
+        video.src = nextUrl;
         video.load();
         video.play().catch(() => {});
+      } else {
+        video.onerror = null;
       }
     };
-    video.src = resolvedUrl;
+    video.src = primaryUrl;
     video.play().catch(() => {});
   }
 }
@@ -1357,66 +1427,113 @@ let activeSeasonKey = '1';
 let activeEpisodeIndex = 0;
 let activeDetailTab = 'season_1';
 
+function parseRawXtreamSeriesData(rawData, seriesItem, cleanBase, username, password) {
+  if (!rawData || !rawData.episodes) return false;
+  const episodesBySeason = rawData.episodes || {};
+  const seasons = {};
+  Object.keys(episodesBySeason).forEach(seasonNum => {
+    seasons[seasonNum] = (episodesBySeason[seasonNum] || []).map(ep => {
+      const ext = ep.container_extension || 'mp4';
+      const rawUrl = `${cleanBase}/series/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${ep.id}.${ext}`;
+      const epInfo = ep.info || {};
+      return {
+        id: ep.id,
+        episode_num: ep.episode_num || 1,
+        title: ep.title || `Episódio ${ep.episode_num || 1}`,
+        season: String(seasonNum),
+        duration: epInfo.duration || ext.toUpperCase(),
+        plot: epInfo.plot || epInfo.description || '',
+        thumbnail: epInfo.cover_big || (Array.isArray(epInfo.backdrop_path) && epInfo.backdrop_path[0]) || epInfo.movie_image || seriesItem.poster || '',
+        rawStreamUrl: rawUrl,
+        streamUrl: IS_NATIVE_APK
+          ? `http://127.0.0.1:34567/proxy?url=${encodeURIComponent(rawUrl)}`
+          : `/api/proxy/stream?url=${encodeURIComponent(rawUrl)}`
+      };
+    });
+  });
+
+  if (Object.keys(seasons).length === 0) return false;
+
+  const info = rawData.info || {};
+  const backdropList = Array.isArray(info.backdrop_path) ? info.backdrop_path : [];
+  seriesItem.seasons = seasons;
+  seriesItem.richInfo = {
+    name: info.name || seriesItem.name || '',
+    cover: info.cover || seriesItem.poster || '',
+    backdrop: (backdropList[0] || info.cover || seriesItem.poster || '').replace('/w500/', '/w1280/'),
+    plot: info.plot || '',
+    cast: info.cast || info.actors || '',
+    genre: info.genre || '',
+    releaseDate: info.releaseDate || info.release_date || '',
+    rating: info.rating || '8.5'
+  };
+  return true;
+}
+
 async function openSeriesDetailScreen(seriesItem) {
   stopVideoPlayback();
   activeSeriesItem = seriesItem;
 
-  // Se for uma Série real Xtream e ainda não carregou temporadas/episódios/backdrop, busca na API
+  // Se for uma Série real Xtream e ainda não carregou temporadas/episódios/backdrop, busca com fallback multi-camada
   if (seriesItem.series_id && !seriesItem.seasons && appState.catalog.xtreamOrigin) {
     showToast(`⏳ Carregando detalhes e episódios de ${seriesItem.name}...`);
-    try {
-      const res = await apiFetch('/api/player/series-info', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          seriesId: seriesItem.series_id,
-          ...appState.catalog.xtreamOrigin
-        })
-      });
-      const data = await res.json();
-      if (data.ok) {
-        seriesItem.seasons = data.seasons || {};
-        seriesItem.richInfo = data.info || {};
-      }
-    } catch (err) {
-      // Fallback direto Xtream Series Info para APK Mobile Standalone
+    const { baseUrl, username, password } = appState.catalog.xtreamOrigin;
+    const cleanBase = String(baseUrl || '').trim().replace(/\/+$/, '');
+    const httpApiUrl = `${cleanBase}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_series_info&series_id=${encodeURIComponent(seriesItem.series_id)}`;
+    const httpsApiUrl = httpApiUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/');
+
+    let loaded = false;
+
+    // 1. Se estiver no APK Android, tenta via Proxy Nativo Local (127.0.0.1:34567)
+    if (IS_NATIVE_APK && !loaded) {
       try {
-        const { baseUrl, username, password } = appState.catalog.xtreamOrigin;
-        const cleanBase = baseUrl.trim().replace(/\/+$/, '');
-        const url = `${cleanBase}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_series_info&series_id=${encodeURIComponent(seriesItem.series_id)}`;
-        const rawData = await fetch(url).then(r => r.json());
-        const episodesBySeason = rawData.episodes || {};
-        const seasons = {};
-        Object.keys(episodesBySeason).forEach(seasonNum => {
-          seasons[seasonNum] = (episodesBySeason[seasonNum] || []).map(ep => {
-            const ext = ep.container_extension || 'mp4';
-            const rawUrl = `${cleanBase}/series/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${ep.id}.${ext}`;
-            return {
-              id: ep.id,
-              episode_num: ep.episode_num || 1,
-              title: ep.title || `Episódio ${ep.episode_num || 1}`,
-              season: seasonNum,
-              duration: (ep.info && ep.info.duration) || ext.toUpperCase(),
-              plot: (ep.info && ep.info.plot) || '',
-              thumbnail: (ep.info && ep.info.movie_image) || '',
-              rawStreamUrl: rawUrl,
-              streamUrl: rawUrl
-            };
-          });
+        const res = await fetch(`http://127.0.0.1:34567/proxy?url=${encodeURIComponent(httpApiUrl)}`);
+        if (res.ok) {
+          const rawData = await res.json();
+          loaded = parseRawXtreamSeriesData(rawData, seriesItem, cleanBase, username, password);
+        }
+      } catch (_) {}
+    }
+
+    // 2. Tenta busca direta HTTPS no próprio navegador/aparelho do usuário (IP brasileiro, CORS habilitado no Cloudflare do servidor IPTV!)
+    if (!loaded) {
+      try {
+        const res = await fetch(httpsApiUrl);
+        if (res.ok) {
+          const rawData = await res.json();
+          loaded = parseRawXtreamSeriesData(rawData, seriesItem, cleanBase, username, password);
+        }
+      } catch (_) {}
+    }
+
+    // 3. Fallback via API Backend (/api/player/series-info no localhost:3000 ou Render)
+    if (!loaded) {
+      try {
+        const res = await apiFetch('/api/player/series-info', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            seriesId: seriesItem.series_id,
+            ...appState.catalog.xtreamOrigin
+          })
         });
-        const info = rawData.info || {};
-        const backdropList = Array.isArray(info.backdrop_path) ? info.backdrop_path : [];
-        seriesItem.seasons = seasons;
-        seriesItem.richInfo = {
-          name: info.name || seriesItem.name || '',
-          cover: info.cover || seriesItem.poster || '',
-          backdrop: backdropList[0] || info.cover || seriesItem.poster || '',
-          plot: info.plot || '',
-          cast: info.cast || '',
-          genre: info.genre || '',
-          releaseDate: info.releaseDate || info.release_date || '',
-          rating: info.rating || '8.5'
-        };
+        const data = await res.json();
+        if (data && data.ok && data.seasons && Object.keys(data.seasons).length > 0) {
+          seriesItem.seasons = data.seasons;
+          seriesItem.richInfo = data.info || {};
+          loaded = true;
+        }
+      } catch (_) {}
+    }
+
+    // 4. Fallback HTTP direto caso esteja em contexto HTTP
+    if (!loaded) {
+      try {
+        const res = await fetch(httpApiUrl);
+        if (res.ok) {
+          const rawData = await res.json();
+          loaded = parseRawXtreamSeriesData(rawData, seriesItem, cleanBase, username, password);
+        }
       } catch (e2) {
         console.error('Erro ao carregar série:', e2);
       }
@@ -1727,7 +1844,7 @@ function toggleCinemaFullscreen() {
 
 let mpegtsPlayer = null;
 
-function startMpegTsPlayback(videoElement, tsUrl) {
+function startMpegTsPlayback(videoElement, tsUrl, fallbackUrls = [], rawStreamUrl = '') {
   try {
     mpegtsPlayer = mpegts.createPlayer({
       type: 'mse',
@@ -1737,6 +1854,17 @@ function startMpegTsPlayback(videoElement, tsUrl) {
     mpegtsPlayer.attachMediaElement(videoElement);
     mpegtsPlayer.load();
     mpegtsPlayer.play().catch(() => {});
+
+    if (mpegts.Events && mpegts.Events.ERROR) {
+      mpegtsPlayer.on(mpegts.Events.ERROR, (errorType, errorDetail) => {
+        if (Array.isArray(fallbackUrls) && fallbackUrls.length > 0) {
+          const nextUrl = fallbackUrls[0];
+          const remaining = fallbackUrls.slice(1);
+          destroyPlayers();
+          startMpegTsPlayback(videoElement, nextUrl, remaining, rawStreamUrl);
+        }
+      });
+    }
   } catch (err) {
     console.error('Erro mpegts:', err);
   }
