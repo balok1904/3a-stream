@@ -1070,6 +1070,166 @@ app.get('/api/proxy/resolve-cast-url', async (req, res) => {
   }
 });
 
+// Descoberta de Smart TVs e Chromecasts na mesma rede Wi-Fi (SSDP / UPnP / DIAL)
+const dgram = require('dgram');
+const discoveredLanTvsCache = new Map();
+
+function scanLanTvsViaSsdp(timeoutMs = 1800) {
+  return new Promise((resolve) => {
+    const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    const locations = new Map();
+
+    socket.on('message', (msg, rinfo) => {
+      try {
+        const text = msg.toString('utf8');
+        const locMatch = text.match(/LOCATION:\s*(http[^\r\n]+)/i);
+        if (locMatch && locMatch[1]) {
+          locations.set(locMatch[1].trim(), rinfo.address);
+        }
+      } catch (_) {}
+    });
+
+    socket.on('error', () => {});
+
+    socket.bind(() => {
+      try {
+        const targets = [
+          'urn:schemas-upnp-org:service:AVTransport:1',
+          'urn:schemas-upnp-org:device:MediaRenderer:1',
+          'urn:dial-multiscreen-org:service:dial:1'
+        ];
+        for (const st of targets) {
+          const payload = Buffer.from(
+            `M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "ssdp:discover"\r\nMX: 1\r\nST: ${st}\r\n\r\n`,
+            'utf8'
+          );
+          socket.send(payload, 0, payload.length, 1900, '239.255.255.250');
+        }
+      } catch (_) {}
+    });
+
+    setTimeout(async () => {
+      try {
+        socket.close();
+      } catch (_) {}
+
+      const entries = Array.from(locations.entries());
+      await Promise.all(
+        entries.map(async ([locUrl, ip]) => {
+          try {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 1500);
+            const resp = await fetch(locUrl, { signal: ctrl.signal });
+            clearTimeout(t);
+            if (!resp.ok) return;
+            const xml = await resp.text();
+            const lower = xml.toLowerCase();
+            if (!lower.includes('avtransport') && !lower.includes('mediarenderer') && !lower.includes('dial')) {
+              return;
+            }
+            const fnMatch = xml.match(/<friendlyName>([^<]+)<\/friendlyName>/i);
+            const mdMatch = xml.match(/<modelName>([^<]+)<\/modelName>/i);
+            if (!fnMatch || !fnMatch[1]) return;
+            const friendlyName = fnMatch[1].trim();
+            const modelName = mdMatch && mdMatch[1] ? mdMatch[1].trim() : 'Smart TV Wi-Fi';
+
+            let controlUrl = '';
+            const avIdx = xml.indexOf('AVTransport');
+            if (avIdx !== -1) {
+              const sub = xml.slice(avIdx);
+              const ctrlMatch = sub.match(/<controlURL>([^<]+)<\/controlURL>/i);
+              if (ctrlMatch && ctrlMatch[1]) {
+                const rawCtrl = ctrlMatch[1].trim();
+                const u = new URL(locUrl);
+                controlUrl = rawCtrl.startsWith('http')
+                  ? rawCtrl
+                  : `${u.protocol}//${u.host}${rawCtrl.startsWith('/') ? '' : '/'}${rawCtrl}`;
+              }
+            }
+
+            const id = `dlna:${ip}:${friendlyName}`;
+            discoveredLanTvsCache.set(id, {
+              id,
+              name: friendlyName,
+              model: modelName,
+              type: controlUrl ? 'dlna' : 'chromecast',
+              ip,
+              controlUrl
+            });
+          } catch (_) {}
+        })
+      );
+
+      resolve(Array.from(discoveredLanTvsCache.values()));
+    }, timeoutMs);
+  });
+}
+
+app.get('/api/cast/discover-tvs', async (req, res) => {
+  try {
+    const devices = await scanLanTvsViaSsdp(1600);
+    res.json({ ok: true, devices });
+  } catch (err) {
+    res.json({ ok: true, devices: Array.from(discoveredLanTvsCache.values()) });
+  }
+});
+
+app.post('/api/cast/play-dlna', async (req, res) => {
+  const { deviceId, streamUrl, title, mimeType } = req.body || {};
+  const dev = discoveredLanTvsCache.get(String(deviceId || ''));
+  if (!dev || !dev.controlUrl) {
+    return res.status(404).json({ ok: false, error: 'TV DLNA não encontrada ou exige conexão via Google Cast.' });
+  }
+  try {
+    const escUrl = String(streamUrl || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const escTitle = String(title || '3A Stream').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const mime = mimeType || 'video/mp4';
+    const setUriXml = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+      <InstanceID>0</InstanceID>
+      <CurrentURI>${escUrl}</CurrentURI>
+      <CurrentURIMetaData>&lt;DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"&gt;&lt;item id="0" parentID="-1" restricted="1"&gt;&lt;dc:title&gt;${escTitle}&lt;/dc:title&gt;&lt;upnp:class&gt;object.item.videoItem&lt;/upnp:class&gt;&lt;res protocolInfo="http-get:*:${mime}:*"&gt;${escUrl}&lt;/res&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;</CurrentURIMetaData>
+    </u:SetAVTransportURI>
+  </s:Body>
+</s:Envelope>`;
+
+    const r1 = await fetch(dev.controlUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml; charset="utf-8"',
+        'SOAPAction': '"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI"'
+      },
+      body: setUriXml
+    });
+
+    if (r1.ok) {
+      const playXml = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:Play xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+      <InstanceID>0</InstanceID>
+      <Speed>1</Speed>
+    </u:Play>
+  </s:Body>
+</s:Envelope>`;
+      await fetch(dev.controlUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/xml; charset="utf-8"',
+          'SOAPAction': '"urn:schemas-upnp-org:service:AVTransport:1#Play"'
+        },
+        body: playXml
+      });
+      return res.json({ ok: true, deviceName: dev.name });
+    }
+    return res.status(502).json({ ok: false, error: 'A Smart TV recusou o comando UPnP.' });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // Proxy de Stream Anti-CORS para listas reais (.ts, .m3u8 e .mp4)
 app.get('/api/proxy/stream', async (req, res) => {
   const targetUrl = req.query.url;

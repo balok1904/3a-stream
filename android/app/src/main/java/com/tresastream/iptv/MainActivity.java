@@ -5,28 +5,56 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
+import android.net.nsd.NsdManager;
+import android.net.nsd.NsdServiceInfo;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Settings;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
-import android.provider.Settings;
 import android.webkit.DownloadListener;
 import android.webkit.JavascriptInterface;
 import android.webkit.URLUtil;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+
 import androidx.activity.OnBackPressedCallback;
+import androidx.annotation.NonNull;
+import androidx.mediarouter.app.MediaRouteChooserDialog;
+import androidx.mediarouter.media.MediaControlIntent;
+import androidx.mediarouter.media.MediaRouteSelector;
+import androidx.mediarouter.media.MediaRouter;
+
 import com.getcapacitor.BridgeActivity;
+import com.google.android.gms.cast.CastDevice;
+import com.google.android.gms.cast.CastMediaControlIntent;
+import com.google.android.gms.cast.MediaInfo;
+import com.google.android.gms.cast.MediaLoadRequestData;
+import com.google.android.gms.cast.MediaMetadata;
+import com.google.android.gms.cast.framework.CastContext;
+import com.google.android.gms.cast.framework.CastSession;
+import com.google.android.gms.cast.framework.SessionManager;
+import com.google.android.gms.cast.framework.SessionManagerListener;
+import com.google.android.gms.cast.framework.media.RemoteMediaClient;
+import com.google.android.gms.common.images.WebImage;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.HttpURLConnection;
 import java.net.Inet4Address;
 import java.net.InetAddress;
@@ -36,6 +64,7 @@ import java.net.Socket;
 import java.net.URL;
 import java.net.URLDecoder;
 import java.util.Enumeration;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class MainActivity extends BridgeActivity {
@@ -46,6 +75,103 @@ public class MainActivity extends BridgeActivity {
     private static volatile String activeTargetUrl = null;
     private static final ConcurrentHashMap<String, String> vodRedirectCache = new ConcurrentHashMap<>();
 
+    // Google Cast & MediaRouter & DLNA Discovery State
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private CastContext castContext = null;
+    private MediaRouter mediaRouter = null;
+    private MediaRouteSelector mediaRouteSelector = null;
+    private WifiManager.MulticastLock multicastLock = null;
+    private NsdManager nsdManager = null;
+    private NsdManager.DiscoveryListener nsdDiscoveryListener = null;
+
+    private static class PendingCastMedia {
+        String streamUrl;
+        String title;
+        String subtitle;
+        String posterUrl;
+        String mimeType;
+        long positionMs;
+    }
+
+    private static class DiscoveredTvDevice {
+        String id;
+        String name;
+        String model;
+        String type; // "chromecast" | "dlna"
+        String ip;
+        int port;
+        String controlUrl; // Para DLNA AVTransport
+        MediaRouter.RouteInfo routeInfo; // Para Chromecast MediaRouter
+    }
+
+    private volatile PendingCastMedia pendingCastMedia = null;
+    private volatile DiscoveredTvDevice activeDlnaDevice = null;
+    private final ConcurrentHashMap<String, DiscoveredTvDevice> discoveredTvs = new ConcurrentHashMap<>();
+
+    private final MediaRouter.Callback mediaRouterCallback = new MediaRouter.Callback() {
+        @Override
+        public void onRouteAdded(@NonNull MediaRouter router, @NonNull MediaRouter.RouteInfo route) {
+            registerMediaRouteDevice(route);
+        }
+
+        @Override
+        public void onRouteChanged(@NonNull MediaRouter router, @NonNull MediaRouter.RouteInfo route) {
+            registerMediaRouteDevice(route);
+        }
+
+        @Override
+        public void onRouteRemoved(@NonNull MediaRouter router, @NonNull MediaRouter.RouteInfo route) {
+            if (route != null && route.getId() != null) {
+                discoveredTvs.remove("route:" + route.getId());
+            }
+        }
+    };
+
+    private final SessionManagerListener<CastSession> castSessionListener = new SessionManagerListener<CastSession>() {
+        @Override
+        public void onSessionStarting(@NonNull CastSession session) {}
+
+        @Override
+        public void onSessionStarted(@NonNull CastSession session, @NonNull String sessionId) {
+            String devName = session.getCastDevice() != null ? session.getCastDevice().getFriendlyName() : "Chromecast";
+            notifyWebCastState(true, devName);
+            if (pendingCastMedia != null) {
+                loadMediaIntoCastSession(session, pendingCastMedia);
+            }
+        }
+
+        @Override
+        public void onSessionStartFailed(@NonNull CastSession session, int error) {
+            notifyWebCastState(false, "");
+        }
+
+        @Override
+        public void onSessionEnding(@NonNull CastSession session) {}
+
+        @Override
+        public void onSessionEnded(@NonNull CastSession session, int error) {
+            notifyWebCastState(false, "");
+        }
+
+        @Override
+        public void onSessionResuming(@NonNull CastSession session, @NonNull String sessionId) {}
+
+        @Override
+        public void onSessionResumed(@NonNull CastSession session, boolean wasSuspended) {
+            String devName = session.getCastDevice() != null ? session.getCastDevice().getFriendlyName() : "Chromecast";
+            notifyWebCastState(true, devName);
+            if (pendingCastMedia != null) {
+                loadMediaIntoCastSession(session, pendingCastMedia);
+            }
+        }
+
+        @Override
+        public void onSessionResumeFailed(@NonNull CastSession session, int error) {}
+
+        @Override
+        public void onSessionSuspended(@NonNull CastSession session, int reason) {}
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -53,6 +179,7 @@ public class MainActivity extends BridgeActivity {
         configureWebViewForVideoPlayback();
         startLocalStreamProxyServer();
         setupAndroidBackNavigation();
+        initNativeCastAndTvDiscovery();
     }
 
     @Override
@@ -68,6 +195,435 @@ public class MainActivity extends BridgeActivity {
         super.onResume();
         configureSystemBarsAndKeepNavigationFixed();
         startLocalStreamProxyServer();
+        startWifiTvDiscoveryScan();
+    }
+
+    @Override
+    public void onDestroy() {
+        try {
+            if (multicastLock != null && multicastLock.isHeld()) {
+                multicastLock.release();
+            }
+        } catch (Exception ignored) {}
+        super.onDestroy();
+    }
+
+    private void initNativeCastAndTvDiscovery() {
+        mainHandler.post(() -> {
+            try {
+                WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wifi != null && multicastLock == null) {
+                    multicastLock = wifi.createMulticastLock("3AStreamCastMulticastLock");
+                    multicastLock.setReferenceCounted(false);
+                    multicastLock.acquire();
+                }
+            } catch (Exception ignored) {}
+
+            try {
+                mediaRouter = MediaRouter.getInstance(getApplicationContext());
+                mediaRouteSelector = new MediaRouteSelector.Builder()
+                    .addControlCategory(CastMediaControlIntent.categoryForCast(CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID))
+                    .addControlCategory(MediaControlIntent.CATEGORY_REMOTE_PLAYBACK)
+                    .addControlCategory(MediaControlIntent.CATEGORY_LIVE_VIDEO)
+                    .build();
+
+                mediaRouter.addCallback(
+                    mediaRouteSelector,
+                    mediaRouterCallback,
+                    MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN | MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY
+                );
+
+                for (MediaRouter.RouteInfo route : mediaRouter.getRoutes()) {
+                    registerMediaRouteDevice(route);
+                }
+            } catch (Exception ignored) {}
+
+            try {
+                castContext = CastContext.getSharedInstance(this);
+                SessionManager sm = castContext.getSessionManager();
+                sm.addSessionManagerListener(castSessionListener, CastSession.class);
+            } catch (Exception ignored) {}
+
+            startWifiTvDiscoveryScan();
+        });
+    }
+
+    private void registerMediaRouteDevice(MediaRouter.RouteInfo route) {
+        try {
+            if (route == null || route.isDefault() || !route.isEnabled()) return;
+            String name = route.getName() != null ? route.getName().trim() : "";
+            if (name.isEmpty()) return;
+            String lower = name.toLowerCase();
+            if (lower.contains("phone") || lower.contains("telefone") || lower.contains("este aparelho") || lower.contains("this device") || lower.contains("speaker")) {
+                return;
+            }
+
+            CastDevice castDev = CastDevice.getFromBundle(route.getExtras());
+            boolean matchesCast = route.matchesSelector(mediaRouteSelector) || castDev != null;
+            if (!matchesCast && !lower.contains("tv") && !lower.contains("cast") && !lower.contains("stick") && !lower.contains("box") && !lower.contains("roku") && !lower.contains("lg") && !lower.contains("samsung")) {
+                return;
+            }
+
+            DiscoveredTvDevice dev = new DiscoveredTvDevice();
+            dev.id = "route:" + route.getId();
+            dev.name = castDev != null && castDev.getFriendlyName() != null ? castDev.getFriendlyName() : name;
+            dev.model = castDev != null && castDev.getModelName() != null ? castDev.getModelName() : (route.getDescription() != null ? route.getDescription() : "Chromecast / Google TV");
+            dev.type = "chromecast";
+            dev.ip = (castDev != null && castDev.getInetAddress() != null) ? castDev.getInetAddress().getHostAddress() : "";
+            dev.routeInfo = route;
+            discoveredTvs.put(dev.id, dev);
+        } catch (Exception ignored) {}
+    }
+
+    private void startWifiTvDiscoveryScan() {
+        // 1. Atualiza rotas do MediaRouter na Main Thread
+        mainHandler.post(() -> {
+            try {
+                if (mediaRouter != null && mediaRouteSelector != null) {
+                    mediaRouter.removeCallback(mediaRouterCallback);
+                    mediaRouter.addCallback(
+                        mediaRouteSelector,
+                        mediaRouterCallback,
+                        MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN | MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY
+                    );
+                    for (MediaRouter.RouteInfo route : mediaRouter.getRoutes()) {
+                        registerMediaRouteDevice(route);
+                    }
+                }
+            } catch (Exception ignored) {}
+        });
+
+        // 2. Inicia scan mDNS (_googlecast._tcp.) via Android NsdManager
+        try {
+            if (nsdManager == null) {
+                nsdManager = (NsdManager) getApplicationContext().getSystemService(Context.NSD_SERVICE);
+            }
+            if (nsdManager != null && nsdDiscoveryListener == null) {
+                nsdDiscoveryListener = new NsdManager.DiscoveryListener() {
+                    @Override
+                    public void onDiscoveryStarted(String regType) {}
+
+                    @Override
+                    public void onServiceFound(NsdServiceInfo service) {
+                        try {
+                            nsdManager.resolveService(service, new NsdManager.ResolveListener() {
+                                @Override
+                                public void onResolveFailed(NsdServiceInfo serviceInfo, int errorCode) {}
+
+                                @Override
+                                public void onServiceResolved(NsdServiceInfo resolvedInfo) {
+                                    try {
+                                        InetAddress host = resolvedInfo.getHost();
+                                        String ip = host != null ? host.getHostAddress() : "";
+                                        String fn = resolvedInfo.getServiceName();
+                                        String md = "Chromecast / Google TV";
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                                            Map<String, byte[]> attrs = resolvedInfo.getAttributes();
+                                            if (attrs != null) {
+                                                if (attrs.get("fn") != null) {
+                                                    fn = new String(attrs.get("fn"), "UTF-8");
+                                                }
+                                                if (attrs.get("md") != null) {
+                                                    md = new String(attrs.get("md"), "UTF-8");
+                                                }
+                                            }
+                                        }
+                                        // Verifica se já existe rota MediaRouter com o mesmo IP ou nome
+                                        for (DiscoveredTvDevice existing : discoveredTvs.values()) {
+                                            if ("chromecast".equals(existing.type) && existing.routeInfo != null) {
+                                                if ((ip != null && !ip.isEmpty() && ip.equals(existing.ip)) || existing.name.equalsIgnoreCase(fn)) {
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                        DiscoveredTvDevice dev = new DiscoveredTvDevice();
+                                        dev.id = "mdns:" + (ip != null && !ip.isEmpty() ? ip : fn);
+                                        dev.name = fn;
+                                        dev.model = md;
+                                        dev.type = "chromecast";
+                                        dev.ip = ip != null ? ip : "";
+                                        dev.port = resolvedInfo.getPort();
+                                        discoveredTvs.put(dev.id, dev);
+                                    } catch (Exception ignored) {}
+                                }
+                            });
+                        } catch (Exception ignored) {}
+                    }
+
+                    @Override
+                    public void onServiceLost(NsdServiceInfo service) {}
+
+                    @Override
+                    public void onDiscoveryStopped(String serviceType) {
+                        nsdDiscoveryListener = null;
+                    }
+
+                    @Override
+                    public void onStartDiscoveryFailed(String serviceType, int errorCode) {
+                        nsdDiscoveryListener = null;
+                    }
+
+                    @Override
+                    public void onStopDiscoveryFailed(String serviceType, int errorCode) {}
+                };
+                nsdManager.discoverServices("_googlecast._tcp.", NsdManager.PROTOCOL_DNS_SD, nsdDiscoveryListener);
+            }
+        } catch (Exception ignored) {}
+
+        // 3. Inicia scan SSDP / UPnP DLNA para Smart TVs (Samsung, LG, Roku, Philips, TCL, Sony, Hisense) na mesma rede Wi-Fi
+        Thread ssdpThread = new Thread(this::scanDlnaSmartTvsOnWifi);
+        ssdpThread.setDaemon(true);
+        ssdpThread.start();
+    }
+
+    private void scanDlnaSmartTvsOnWifi() {
+        DatagramSocket socket = null;
+        try {
+            socket = new DatagramSocket();
+            socket.setBroadcast(true);
+            socket.setSoTimeout(2200);
+            InetAddress multicastAddr = InetAddress.getByName("239.255.255.250");
+
+            String[] searchTargets = new String[] {
+                "urn:schemas-upnp-org:service:AVTransport:1",
+                "urn:schemas-upnp-org:device:MediaRenderer:1",
+                "urn:dial-multiscreen-org:service:dial:1"
+            };
+
+            for (String st : searchTargets) {
+                String msg = "M-SEARCH * HTTP/1.1\r\n" +
+                    "HOST: 239.255.255.250:1900\r\n" +
+                    "MAN: \"ssdp:discover\"\r\n" +
+                    "MX: 2\r\n" +
+                    "ST: " + st + "\r\n\r\n";
+                byte[] sendData = msg.getBytes("UTF-8");
+                DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, multicastAddr, 1900);
+                socket.send(sendPacket);
+            }
+
+            long startTime = System.currentTimeMillis();
+            byte[] recvBuf = new byte[4096];
+            while (System.currentTimeMillis() - startTime < 2600) {
+                DatagramPacket receivePacket = new DatagramPacket(recvBuf, recvBuf.length);
+                socket.receive(receivePacket);
+                String resp = new String(receivePacket.getData(), 0, receivePacket.getLength(), "UTF-8");
+                String location = extractHttpHeader(resp, "location");
+                String ip = receivePacket.getAddress() != null ? receivePacket.getAddress().getHostAddress() : "";
+                if (location != null && location.startsWith("http")) {
+                    fetchDlnaDeviceDetails(location, ip);
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (socket != null) {
+                try { socket.close(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private String extractHttpHeader(String rawHeaders, String headerName) {
+        if (rawHeaders == null) return null;
+        String[] lines = rawHeaders.split("\r?\n");
+        String prefix = headerName.toLowerCase() + ":";
+        for (String line : lines) {
+            if (line.toLowerCase().startsWith(prefix)) {
+                return line.substring(prefix.length()).trim();
+            }
+        }
+        return null;
+    }
+
+    private void fetchDlnaDeviceDetails(String locationUrl, String ip) {
+        try {
+            URL url = new URL(locationUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(2500);
+            conn.setReadTimeout(2500);
+            conn.setRequestMethod("GET");
+            if (conn.getResponseCode() != 200) {
+                conn.disconnect();
+                return;
+            }
+            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line).append("\n");
+            }
+            reader.close();
+            conn.disconnect();
+
+            String xml = sb.toString();
+            String friendlyName = extractXmlTag(xml, "friendlyName");
+            String modelName = extractXmlTag(xml, "modelName");
+            if (friendlyName == null || friendlyName.isEmpty()) return;
+
+            // Ignora roteadores / gateways que não são TVs nem MediaRenderers
+            String lowerXml = xml.toLowerCase();
+            if (!lowerXml.contains("avtransport") && !lowerXml.contains("mediarenderer") && !lowerXml.contains("renderingcontrol") && !lowerXml.contains("dial")) {
+                return;
+            }
+
+            String avControlUrl = extractAvTransportControlUrl(xml, url);
+            if (avControlUrl == null || avControlUrl.isEmpty()) return;
+
+            DiscoveredTvDevice dev = new DiscoveredTvDevice();
+            dev.id = "dlna:" + ip + ":" + friendlyName;
+            dev.name = friendlyName;
+            dev.model = (modelName != null && !modelName.isEmpty()) ? modelName : "Smart TV DLNA / UPnP";
+            dev.type = "dlna";
+            dev.ip = ip;
+            dev.controlUrl = avControlUrl;
+            discoveredTvs.put(dev.id, dev);
+        } catch (Exception ignored) {}
+    }
+
+    private String extractXmlTag(String xml, String tag) {
+        if (xml == null) return null;
+        String open = "<" + tag + ">";
+        String close = "</" + tag + ">";
+        int idx1 = xml.indexOf(open);
+        int idx2 = xml.indexOf(close);
+        if (idx1 != -1 && idx2 > idx1) {
+            return xml.substring(idx1 + open.length(), idx2).trim();
+        }
+        return null;
+    }
+
+    private String extractAvTransportControlUrl(String xml, URL baseUrl) {
+        try {
+            int svcIdx = xml.indexOf("AVTransport");
+            if (svcIdx == -1) return null;
+            int ctrlStart = xml.indexOf("<controlURL>", svcIdx);
+            int ctrlEnd = xml.indexOf("</controlURL>", svcIdx);
+            if (ctrlStart == -1 || ctrlEnd == -1) return null;
+            String rawCtrl = xml.substring(ctrlStart + 12, ctrlEnd).trim();
+            if (rawCtrl.startsWith("http://") || rawCtrl.startsWith("https://")) {
+                return rawCtrl;
+            }
+            String baseOrigin = baseUrl.getProtocol() + "://" + baseUrl.getAuthority();
+            if (rawCtrl.startsWith("/")) {
+                return baseOrigin + rawCtrl;
+            }
+            return baseOrigin + "/" + rawCtrl;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private boolean sendDlnaAvTransportPlay(DiscoveredTvDevice tv, String streamUrl, String title, String mimeType) {
+        if (tv == null || tv.controlUrl == null || tv.controlUrl.isEmpty()) return false;
+        try {
+            String escapedUrl = streamUrl
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
+            String escapedTitle = (title != null ? title : "3A Stream")
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
+
+            String setUriBody = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+                "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">" +
+                "<s:Body>" +
+                "<u:SetAVTransportURI xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\">" +
+                "<InstanceID>0</InstanceID>" +
+                "<CurrentURI>" + escapedUrl + "</CurrentURI>" +
+                "<CurrentURIMetaData>&lt;DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"&gt;&lt;item id=\"0\" parentID=\"-1\" restricted=\"1\"&gt;&lt;dc:title&gt;" + escapedTitle + "&lt;/dc:title&gt;&lt;upnp:class&gt;object.item.videoItem&lt;/upnp:class&gt;&lt;res protocolInfo=\"http-get:*:" + (mimeType != null ? mimeType : "video/mp4") + ":*\"&gt;" + escapedUrl + "&lt;/res&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;</CurrentURIMetaData>" +
+                "</u:SetAVTransportURI>" +
+                "</s:Body>" +
+                "</s:Envelope>";
+
+            int code1 = sendSoapPost(tv.controlUrl, "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"", setUriBody);
+            if (code1 >= 200 && code1 < 300) {
+                String playBody = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+                    "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">" +
+                    "<s:Body>" +
+                    "<u:Play xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\">" +
+                    "<InstanceID>0</InstanceID>" +
+                    "<Speed>1</Speed>" +
+                    "</u:Play>" +
+                    "</s:Body>" +
+                    "</s:Envelope>";
+                sendSoapPost(tv.controlUrl, "\"urn:schemas-upnp-org:service:AVTransport:1#Play\"", playBody);
+                activeDlnaDevice = tv;
+                notifyWebCastState(true, tv.name);
+                return true;
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    private int sendSoapPost(String controlUrl, String soapAction, String xmlPayload) throws Exception {
+        URL url = new URL(controlUrl);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setConnectTimeout(5000);
+        conn.setReadTimeout(5000);
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "text/xml; charset=\"utf-8\"");
+        conn.setRequestProperty("SOAPAction", soapAction);
+        byte[] data = xmlPayload.getBytes("UTF-8");
+        conn.setRequestProperty("Content-Length", String.valueOf(data.length));
+        OutputStream os = conn.getOutputStream();
+        os.write(data);
+        os.flush();
+        os.close();
+        int responseCode = conn.getResponseCode();
+        conn.disconnect();
+        return responseCode;
+    }
+
+    private void loadMediaIntoCastSession(CastSession session, PendingCastMedia media) {
+        if (session == null || media == null) return;
+        mainHandler.post(() -> {
+            try {
+                RemoteMediaClient remoteMediaClient = session.getRemoteMediaClient();
+                if (remoteMediaClient == null) return;
+
+                MediaMetadata metadata = new MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE);
+                metadata.putString(MediaMetadata.KEY_TITLE, media.title != null ? media.title : "3A Stream");
+                if (media.subtitle != null && !media.subtitle.isEmpty()) {
+                    metadata.putString(MediaMetadata.KEY_SUBTITLE, media.subtitle);
+                }
+                if (media.posterUrl != null && media.posterUrl.startsWith("http")) {
+                    metadata.addImage(new WebImage(Uri.parse(media.posterUrl)));
+                }
+
+                String cType = (media.mimeType != null && !media.mimeType.isEmpty()) ? media.mimeType : "video/mp4";
+                int streamType = cType.toLowerCase().contains("mpegurl")
+                    ? MediaInfo.STREAM_TYPE_LIVE
+                    : MediaInfo.STREAM_TYPE_BUFFERED;
+
+                MediaInfo mediaInfo = new MediaInfo.Builder(media.streamUrl)
+                    .setStreamType(streamType)
+                    .setContentType(cType)
+                    .setMetadata(metadata)
+                    .build();
+
+                MediaLoadRequestData requestData = new MediaLoadRequestData.Builder()
+                    .setMediaInfo(mediaInfo)
+                    .setAutoplay(Boolean.TRUE)
+                    .setCurrentTime(streamType == MediaInfo.STREAM_TYPE_LIVE ? 0L : Math.max(0L, media.positionMs))
+                    .build();
+
+                remoteMediaClient.load(requestData);
+                String devName = session.getCastDevice() != null ? session.getCastDevice().getFriendlyName() : "Chromecast";
+                notifyWebCastState(true, devName);
+            } catch (Exception ignored) {}
+        });
+    }
+
+    private void notifyWebCastState(boolean connected, String deviceName) {
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            final String safeName = (deviceName != null ? deviceName : "TV").replace("'", "\\'");
+            getBridge().getWebView().post(() -> {
+                getBridge().getWebView().evaluateJavascript(
+                    "if (window.onAndroidNativeCastStateChanged) { window.onAndroidNativeCastStateChanged(" + connected + ", '" + safeName + "'); }",
+                    null
+                );
+            });
+        }
     }
 
     private String detectDeviceWifiIpAddress() {
@@ -112,6 +668,138 @@ public class MainActivity extends BridgeActivity {
         }
 
         @JavascriptInterface
+        public void startTvDiscovery() {
+            startWifiTvDiscoveryScan();
+        }
+
+        @JavascriptInterface
+        public String getDiscoveredTvsJson() {
+            try {
+                JSONArray arr = new JSONArray();
+                for (DiscoveredTvDevice dev : discoveredTvs.values()) {
+                    JSONObject obj = new JSONObject();
+                    obj.put("id", dev.id);
+                    obj.put("name", dev.name);
+                    obj.put("model", dev.model != null ? dev.model : "");
+                    obj.put("type", dev.type);
+                    obj.put("ip", dev.ip != null ? dev.ip : "");
+                    arr.put(obj);
+                }
+                return arr.toString();
+            } catch (Exception e) {
+                return "[]";
+            }
+        }
+
+        @JavascriptInterface
+        public boolean connectAndCastToTv(String deviceId, String streamUrl, String title, String subtitle, String posterUrl, String mimeType, int positionSeconds) {
+            PendingCastMedia pending = new PendingCastMedia();
+            pending.streamUrl = streamUrl;
+            pending.title = title;
+            pending.subtitle = subtitle;
+            pending.posterUrl = posterUrl;
+            pending.mimeType = mimeType;
+            pending.positionMs = Math.max(0L, positionSeconds * 1000L);
+            pendingCastMedia = pending;
+
+            DiscoveredTvDevice dev = discoveredTvs.get(deviceId);
+            if (dev != null && "dlna".equals(dev.type)) {
+                new Thread(() -> sendDlnaAvTransportPlay(dev, streamUrl, title, mimeType)).start();
+                return true;
+            }
+
+            mainHandler.post(() -> {
+                try {
+                    if (castContext != null) {
+                        CastSession currentSession = castContext.getSessionManager().getCurrentCastSession();
+                        if (currentSession != null && currentSession.isConnected()) {
+                            if (dev == null || dev.routeInfo == null || dev.routeInfo.isSelected()) {
+                                loadMediaIntoCastSession(currentSession, pending);
+                                return;
+                            }
+                        }
+                    }
+
+                    if (dev != null && dev.routeInfo != null && mediaRouter != null) {
+                        mediaRouter.selectRoute(dev.routeInfo);
+                        return;
+                    }
+
+                    // Se foi descoberto via mDNS, procura rota correspondente no MediaRouter ou abre o seletor nativo
+                    if (dev != null && mediaRouter != null) {
+                        for (MediaRouter.RouteInfo route : mediaRouter.getRoutes()) {
+                            if (route.getName() != null && route.getName().equalsIgnoreCase(dev.name)) {
+                                mediaRouter.selectRoute(route);
+                                return;
+                            }
+                        }
+                    }
+
+                    openNativeCastChooserInternal();
+                } catch (Exception ignored) {}
+            });
+            return true;
+        }
+
+        @JavascriptInterface
+        public void openNativeCastChooserDialog(String streamUrl, String title, String subtitle, String posterUrl, String mimeType, int positionSeconds) {
+            PendingCastMedia pending = new PendingCastMedia();
+            pending.streamUrl = streamUrl;
+            pending.title = title;
+            pending.subtitle = subtitle;
+            pending.posterUrl = posterUrl;
+            pending.mimeType = mimeType;
+            pending.positionMs = Math.max(0L, positionSeconds * 1000L);
+            pendingCastMedia = pending;
+
+            mainHandler.post(MainActivity.this::openNativeCastChooserInternal);
+        }
+
+        @JavascriptInterface
+        public void controlNativeCast(String action) {
+            mainHandler.post(() -> {
+                try {
+                    if ("disconnect".equals(action)) {
+                        if (castContext != null && castContext.getSessionManager().getCurrentCastSession() != null) {
+                            castContext.getSessionManager().endCurrentSession(true);
+                        }
+                        if (mediaRouter != null) {
+                            mediaRouter.unselect(MediaRouter.UNSELECT_REASON_STOPPED);
+                        }
+                        if (activeDlnaDevice != null) {
+                            final DiscoveredTvDevice dlna = activeDlnaDevice;
+                            activeDlnaDevice = null;
+                            new Thread(() -> {
+                                try {
+                                    String stopXml = "<?xml version=\"1.0\" encoding=\"utf-8\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:Stop xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"><InstanceID>0</InstanceID></u:Stop></s:Body></s:Envelope>";
+                                    sendSoapPost(dlna.controlUrl, "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"", stopXml);
+                                } catch (Exception ignored) {}
+                            }).start();
+                        }
+                        notifyWebCastState(false, "");
+                        return;
+                    }
+
+                    if (castContext != null) {
+                        CastSession session = castContext.getSessionManager().getCurrentCastSession();
+                        if (session != null && session.getRemoteMediaClient() != null) {
+                            RemoteMediaClient client = session.getRemoteMediaClient();
+                            if ("togglePlay".equals(action)) {
+                                client.togglePlayback();
+                            } else if ("rewind10".equals(action)) {
+                                long pos = Math.max(0L, client.getApproximateStreamPosition() - 10000L);
+                                client.seek(pos);
+                            } else if ("forward10".equals(action)) {
+                                long pos = client.getApproximateStreamPosition() + 10000L;
+                                client.seek(pos);
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+            });
+        }
+
+        @JavascriptInterface
         public boolean launchExternalCastIntent(String streamUrl, String title, String mimeType) {
             try {
                 if (streamUrl == null || streamUrl.isEmpty()) return false;
@@ -124,7 +812,7 @@ public class MainActivity extends BridgeActivity {
                     intent.putExtra(Intent.EXTRA_TITLE, title);
                 }
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                Intent chooser = Intent.createChooser(intent, "Transmitir para Chromecast / Smart TV");
+                Intent chooser = Intent.createChooser(intent, "Transmitir com App Externo");
                 chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(chooser);
                 return true;
@@ -160,6 +848,23 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    private void openNativeCastChooserInternal() {
+        try {
+            if (castContext != null) {
+                CastSession session = castContext.getSessionManager().getCurrentCastSession();
+                if (session != null && session.isConnected() && pendingCastMedia != null) {
+                    loadMediaIntoCastSession(session, pendingCastMedia);
+                    return;
+                }
+            }
+            MediaRouteChooserDialog dialog = new MediaRouteChooserDialog(MainActivity.this);
+            if (mediaRouteSelector != null) {
+                dialog.setRouteSelector(mediaRouteSelector);
+            }
+            dialog.show();
+        } catch (Exception ignored) {}
+    }
+
     private void configureWebViewForVideoPlayback() {
         try {
             if (getBridge() != null && getBridge().getWebView() != null) {
@@ -186,7 +891,6 @@ public class MainActivity extends BridgeActivity {
                             if (!fileName.toLowerCase().endsWith(".mp4")) {
                                 fileName = fileName + ".mp4";
                             }
-                            // Se for URL do proxy local 127.0.0.1:34567, extrai a URL remota para o DownloadManager do sistema Android
                             if (url != null && url.contains(":34567/proxy") && url.contains("url=")) {
                                 int uIdx = url.indexOf("url=") + 4;
                                 String rawU = url.substring(uIdx).split("&")[0];
@@ -318,9 +1022,8 @@ public class MainActivity extends BridgeActivity {
             isApiCall = cleanTarget.contains("player_api.php");
 
             if (!isApiCall) {
-                boolean isSameVodTarget = isVodOrSeries && cleanTarget.equals(activeTargetUrl);
-                if (!isSameVodTarget) {
-                    // Libera imediatamente qualquer stream de outro canal/filme para respeitar max_connections=1
+                boolean isSameTarget = cleanTarget.equals(activeTargetUrl);
+                if (!isSameTarget) {
                     closePreviousActiveStream();
                 }
                 activeTargetUrl = cleanTarget;
@@ -329,7 +1032,6 @@ public class MainActivity extends BridgeActivity {
 
             String currentUrl = vodRedirectCache.getOrDefault(cleanTarget, cleanTarget);
 
-            // Segue até 6 redirecionamentos (301/302/303/307/308) sempre usando GET (evita Content-Length: 0 em HEAD no Cloudflare)
             for (int redirectCount = 0; redirectCount < 6; redirectCount++) {
                 URL urlObj = new URL(currentUrl);
                 conn = (HttpURLConnection) urlObj.openConnection();
@@ -362,7 +1064,6 @@ public class MainActivity extends BridgeActivity {
                         vodRedirectCache.put(cleanTarget, currentUrl);
                     }
                 } else if (code >= 400 && !currentUrl.equals(cleanTarget)) {
-                    // Se o link em cache expirou, limpa o cache e tenta novamente do link original
                     vodRedirectCache.remove(cleanTarget);
                     conn.disconnect();
                     currentUrl = cleanTarget;
@@ -399,7 +1100,6 @@ public class MainActivity extends BridgeActivity {
             respHeaders.append("Access-Control-Allow-Origin: *\r\n");
             respHeaders.append("Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges\r\n");
             if (!isApiCall) {
-                // Sempre envia 'bytes' válido (corrige XUI One que envia '0-735130532')
                 respHeaders.append("Accept-Ranges: bytes\r\n");
             }
             if (contentLength != null) {
@@ -447,10 +1147,6 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    /**
-     * Mantém os botões do Android (Voltar, Home, Recentes) SEMPRE FIXADOS durante o uso do app,
-     * ocultando apenas a barra de status superior (relógio/notificações) para não cortar o topo.
-     */
     private void configureSystemBarsAndKeepNavigationFixed() {
         Window window = getWindow();
         if (window == null) return;
@@ -481,10 +1177,6 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    /**
-     * Intercepta o botão Voltar do Android para voltar uma página dentro do app
-     * em vez de fechar o aplicativo.
-     */
     private void setupAndroidBackNavigation() {
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override

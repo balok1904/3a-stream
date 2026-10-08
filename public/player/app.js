@@ -3405,24 +3405,42 @@ function showToast(_msg) {
 // ============================================================================
 // MOTOR CHROMECAST & SMART TV 3A STREAM (WEB + ANDROID APK NATIVO)
 // Suporta:
-// 1. Google Cast SDK Oficial (Chromecast / Google TV / Android TV)
-// 2. HTML5 RemotePlayback API / AirPlay (Navegadores Mobile e Smart TVs)
-// 3. Bridge Nativa Android APK (Proxy LAN 0.0.0.0:34567 + Intent Cast/VLC/DLNA + Configurações Cast do Android)
+// 1. Descoberta Automática de TVs e Chromecasts na mesma Rede Wi-Fi (MediaRouter + mDNS _googlecast._tcp + SSDP/UPnP DLNA)
+// 2. Conexão Direta ao Chromecast / Google TV via Google Cast SDK Nativo (Android) e CAF SDK (Web)
+// 3. Conexão Direta a Smart TVs (Samsung, LG, TCL, Roku, Philips, Sony) via UPnP/DLNA AVTransport
 // ============================================================================
 const castEngineState = {
   sdkReady: false,
   isConnected: false,
-  deviceName: 'Chromecast / Google TV',
+  nativeConnected: false,
+  deviceName: 'Chromecast / Smart TV',
   remotePlayer: null,
   remoteController: null,
   activeMediaInfo: null,
-  lastResolvedInfo: null
+  lastResolvedInfo: null,
+  discoveryPollTimer: null,
+  discoveredDevices: []
 };
 
 window.__onGCastApiAvailable = function (isAvailable) {
   if (isAvailable && window.cast && window.cast.framework) {
     initGoogleCastFramework();
   }
+};
+
+// Callback disparado pelo MainActivity.java quando o Cast Nativo do Android ou DLNA conecta/desconecta
+window.onAndroidNativeCastStateChanged = function (connected, deviceName) {
+  castEngineState.nativeConnected = Boolean(connected);
+  castEngineState.isConnected = Boolean(connected) || isWebGoogleCastConnected();
+  if (deviceName) {
+    castEngineState.deviceName = deviceName;
+  }
+  if (connected) {
+    [document.getElementById('cinemaVideoElement'), document.getElementById('iptvVideoPlayer')].forEach((v) => {
+      if (v && !v.paused) v.pause();
+    });
+  }
+  syncAllCastButtonsUI();
 };
 
 function initGoogleCastFramework() {
@@ -3455,7 +3473,7 @@ function initGoogleCastFramework() {
             'Chromecast';
           syncAllCastButtonsUI();
         } else if (state === cast.framework.SessionState.SESSION_ENDED) {
-          castEngineState.isConnected = false;
+          castEngineState.isConnected = Boolean(castEngineState.nativeConnected);
           syncAllCastButtonsUI();
         }
       }
@@ -3465,7 +3483,7 @@ function initGoogleCastFramework() {
       remoteController.addEventListener(
         cast.framework.RemotePlayerEventType.IS_CONNECTED_CHANGED,
         () => {
-          castEngineState.isConnected = Boolean(remotePlayer.isConnected);
+          castEngineState.isConnected = Boolean(remotePlayer.isConnected) || Boolean(castEngineState.nativeConnected);
           syncAllCastButtonsUI();
         }
       );
@@ -3475,12 +3493,11 @@ function initGoogleCastFramework() {
   }
 }
 
-// Caso o script do Cast SDK tenha carregado antes do app.js
 if (window.cast && window.cast.framework && !castEngineState.sdkReady) {
   initGoogleCastFramework();
 }
 
-function isGoogleCastConnected() {
+function isWebGoogleCastConnected() {
   try {
     if (castEngineState.sdkReady && window.cast && window.cast.framework) {
       const session = cast.framework.CastContext.getInstance().getCurrentSession();
@@ -3488,6 +3505,10 @@ function isGoogleCastConnected() {
     }
   } catch (_) {}
   return false;
+}
+
+function isGoogleCastConnected() {
+  return Boolean(castEngineState.nativeConnected) || isWebGoogleCastConnected();
 }
 
 function syncAllCastButtonsUI() {
@@ -3586,7 +3607,6 @@ async function resolveCastableStreamInfo(targetCtx) {
   if (!rawUrl) rawUrl = targetCtx.streamUrl || '';
 
   const isLive = targetCtx.mode === 'live';
-  // Chromecast Default Media Receiver reproduz HLS (.m3u8) e MP4 nativamente; converte .ts ao vivo para .m3u8
   let castRawUrl = rawUrl;
   if (isLive && /\.ts(\?|$)/i.test(castRawUrl)) {
     castRawUrl = castRawUrl.replace(/\.ts(\?|$)/i, '.m3u8$1');
@@ -3598,16 +3618,14 @@ async function resolveCastableStreamInfo(targetCtx) {
   let lanProxyUrl = '';
   let resolvedCdnUrl = '';
 
-  // A) Se estiver no APK Android com Bridge Nativa (MainActivity.java escutando em 0.0.0.0:34567)
   if (window.AndroidCastBridge) {
     try {
       const lanBase = window.AndroidCastBridge.getLanProxyBaseUrl();
       if (lanBase && /^http:\/\/\d+\.\d+\.\d+\.\d+/i.test(lanBase)) {
         lanProxyUrl = `${lanBase}/proxy?url=${encodeURIComponent(castRawUrl)}`;
       }
-      // Faz warmup rápido no proxy local caso o redirect 302 ainda não esteja em cache
       let cached = window.AndroidCastBridge.getCachedRedirectUrl(castRawUrl);
-      if (!cached && !isLive) {
+      if ((!cached || cached === castRawUrl) && !isLive) {
         try {
           await fetch(`http://127.0.0.1:34567/proxy?url=${encodeURIComponent(castRawUrl)}`, {
             method: 'GET',
@@ -3622,7 +3640,6 @@ async function resolveCastableStreamInfo(targetCtx) {
     } catch (_) {}
   }
 
-  // B) Se estiver no Navegador Web / PC, consulta /api/proxy/resolve-cast-url
   if (!resolvedCdnUrl && !IS_NATIVE_APK) {
     try {
       const endpoint = LOCAL_PC_PROXY_BASE
@@ -3641,10 +3658,6 @@ async function resolveCastableStreamInfo(targetCtx) {
     } catch (_) {}
   }
 
-  // Monta a lista ordenada de URLs para o Chromecast:
-  // 1. Proxy LAN Wi-Fi local (192.168.x.x) quando disponível, pois já entrega CORS (*) e Range bytes da própria internet residencial do usuário!
-  // 2. URL final resolvida do CDN (ex: r2-auth.atlaspainel.net) ou HTTPS direto
-  // 3. URL original
   const candidateUrls = [];
   const pushUnique = (u) => {
     if (u && /^https?:\/\//i.test(u) && !candidateUrls.includes(u)) {
@@ -3675,7 +3688,25 @@ async function resolveCastableStreamInfo(targetCtx) {
 async function startGoogleCastMedia(targetCtx, urlOverride = null) {
   if (!targetCtx) return false;
 
-  // Se o Google Cast SDK estiver disponível no navegador (Chrome / Edge Desktop ou Android)
+  // 1. No APK Android Nativo: abre o seletor nativo MediaRouteChooserDialog do Google Cast (que lista as TVs da rede Wi-Fi!)
+  if (window.AndroidCastBridge && typeof window.AndroidCastBridge.openNativeCastChooserDialog === 'function') {
+    if (targetCtx.videoElement && !targetCtx.videoElement.paused) {
+      targetCtx.videoElement.pause();
+    }
+    const streamInfo = await resolveCastableStreamInfo(targetCtx);
+    const castUrl = urlOverride || streamInfo.primaryUrl || streamInfo.externalAppUrl;
+    window.AndroidCastBridge.openNativeCastChooserDialog(
+      castUrl,
+      targetCtx.title || '3A Stream',
+      targetCtx.subtitle || 'Transmitindo pelo 3A Stream',
+      targetCtx.poster || '',
+      streamInfo.contentType,
+      Math.floor(targetCtx.currentTime || 0)
+    );
+    return true;
+  }
+
+  // 2. No navegador Chrome / Edge Desktop com Google Cast SDK
   if (window.cast && window.cast.framework && window.chrome && window.chrome.cast) {
     try {
       if (!castEngineState.sdkReady) initGoogleCastFramework();
@@ -3717,7 +3748,6 @@ async function startGoogleCastMedia(targetCtx, urlOverride = null) {
 
           await session.loadMedia(request);
 
-          // Pausa o vídeo local no aparelho enquanto reproduz na TV
           if (targetCtx.videoElement && !targetCtx.videoElement.paused) {
             targetCtx.videoElement.pause();
           }
@@ -3736,7 +3766,7 @@ async function startGoogleCastMedia(targetCtx, urlOverride = null) {
     }
   }
 
-  // Fallback HTML5 RemotePlayback API (Chrome Mobile / Safari AirPlay / Smart TVs)
+  // 3. Fallback HTML5 RemotePlayback API (Navegadores Mobile / AirPlay)
   const videoEl = targetCtx.videoElement || document.getElementById('cinemaVideoElement') || document.getElementById('iptvVideoPlayer');
   if (videoEl) {
     if (videoEl.remote && typeof videoEl.remote.prompt === 'function') {
@@ -3751,17 +3781,6 @@ async function startGoogleCastMedia(targetCtx, urlOverride = null) {
         return true;
       } catch (_) {}
     }
-  }
-
-  // Fallback Nativo Android APK (abre seletor de apps de Cast / VLC / Web Video Caster / Smart TV)
-  if (window.AndroidCastBridge) {
-    const streamInfo = await resolveCastableStreamInfo(targetCtx);
-    window.AndroidCastBridge.launchExternalCastIntent(
-      streamInfo.externalAppUrl,
-      targetCtx.title || '3A Stream',
-      streamInfo.contentType
-    );
-    return true;
   }
 
   return false;
@@ -3788,7 +3807,156 @@ function castActiveSeriesEpisode(event) {
   openCastControlModal(ctx);
 }
 
+function stopCastDiscoveryPolling() {
+  if (castEngineState.discoveryPollTimer) {
+    clearInterval(castEngineState.discoveryPollTimer);
+    castEngineState.discoveryPollTimer = null;
+  }
+}
+
+async function refreshWifiTvDevicesListUI() {
+  const container = document.getElementById('castWifiTvsListContainer');
+  if (!container) {
+    stopCastDiscoveryPolling();
+    return;
+  }
+
+  let devices = [];
+  if (window.AndroidCastBridge && typeof window.AndroidCastBridge.getDiscoveredTvsJson === 'function') {
+    try {
+      const rawJson = window.AndroidCastBridge.getDiscoveredTvsJson();
+      devices = JSON.parse(rawJson || '[]');
+    } catch (_) {}
+  } else {
+    try {
+      const endpoint = LOCAL_PC_PROXY_BASE
+        ? `${LOCAL_PC_PROXY_BASE}/api/cast/discover-tvs`
+        : '/api/cast/discover-tvs';
+      const res = await fetch(endpoint);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.devices)) {
+          devices = data.devices;
+        }
+      }
+    } catch (_) {}
+  }
+
+  castEngineState.discoveredDevices = devices;
+
+  if (!devices || devices.length === 0) {
+    container.innerHTML = `
+      <div style="padding:12px;border-radius:9px;background:rgba(15,23,42,0.65);border:1px dashed rgba(56,189,248,0.3);color:#94a3b8;font-size:12px;text-align:center;">
+        🔍 Procurando TVs e Chromecasts na sua rede Wi-Fi...<br/>
+        <span style="font-size:11px;color:#64748b;">Certifique-se de que a TV / Chromecast está ligada no mesmo Wi-Fi.</span>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = devices
+    .map((dev, idx) => {
+      const badgeLabel = dev.type === 'dlna' ? 'Smart TV Wi-Fi' : 'Chromecast / Google TV';
+      const ipText = dev.ip ? ` • ${dev.ip}` : '';
+      return `
+        <button type="button" class="cast-option-btn" style="border-color:rgba(16,185,129,0.5);background:linear-gradient(135deg,rgba(5,150,105,0.18),rgba(14,165,233,0.18));" onclick="connectToDiscoveredWifiTv(${idx})">
+          <div class="cast-option-left">
+            <div class="cast-option-icon" style="background:linear-gradient(135deg,#059669,#0284c7);">📺</div>
+            <div>
+              <div class="cast-option-title">${dev.name || 'Smart TV'}</div>
+              <div class="cast-option-desc" style="color:#6ee7b7;">${badgeLabel}${dev.model ? ` (${dev.model})` : ''}${ipText}</div>
+            </div>
+          </div>
+          <span style="background:#059669;color:#fff;padding:5px 10px;border-radius:7px;font-weight:800;font-size:11.5px;white-space:nowrap;">Conectar</span>
+        </button>
+      `;
+    })
+    .join('');
+}
+
+async function connectToDiscoveredWifiTv(deviceIndex) {
+  const dev = castEngineState.discoveredDevices[deviceIndex];
+  const targetCtx = castEngineState.activeMediaInfo || getCurrentCastTargetContext();
+  if (!dev || !targetCtx) return;
+
+  const container = document.getElementById('castWifiTvsListContainer');
+  if (container) {
+    container.innerHTML = `
+      <div style="padding:14px;border-radius:9px;background:rgba(5,150,105,0.2);border:1px solid rgba(16,185,129,0.5);color:#ecfdf5;font-size:13px;font-weight:700;text-align:center;">
+        ⏳ Conectando e enviando vídeo para <strong>${dev.name}</strong>...
+      </div>
+    `;
+  }
+
+  // Pausa imediatamente o vídeo local para liberar a conexão única do servidor IPTV para a TV!
+  if (targetCtx.videoElement && !targetCtx.videoElement.paused) {
+    targetCtx.videoElement.pause();
+  }
+
+  const streamInfo = await resolveCastableStreamInfo(targetCtx);
+  const castUrl = streamInfo.primaryUrl || streamInfo.externalAppUrl;
+
+  if (window.AndroidCastBridge && typeof window.AndroidCastBridge.connectAndCastToTv === 'function') {
+    window.AndroidCastBridge.connectAndCastToTv(
+      dev.id,
+      castUrl,
+      targetCtx.title || '3A Stream',
+      targetCtx.subtitle || 'Transmitindo pelo 3A Stream',
+      targetCtx.poster || '',
+      streamInfo.contentType,
+      Math.floor(targetCtx.currentTime || 0)
+    );
+    setTimeout(() => {
+      stopCastDiscoveryPolling();
+      closeAppModal();
+    }, 900);
+    return;
+  }
+
+  // No Navegador Web / PC: se for Smart TV DLNA, envia via /api/cast/play-dlna
+  if (dev.type === 'dlna') {
+    try {
+      const endpoint = LOCAL_PC_PROXY_BASE
+        ? `${LOCAL_PC_PROXY_BASE}/api/cast/play-dlna`
+        : '/api/cast/play-dlna';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: dev.id,
+          streamUrl: castUrl,
+          title: targetCtx.title || '3A Stream',
+          mimeType: streamInfo.contentType
+        })
+      });
+      const data = await res.json();
+      if (data && data.ok) {
+        castEngineState.nativeConnected = true;
+        castEngineState.deviceName = dev.name;
+        syncAllCastButtonsUI();
+        stopCastDiscoveryPolling();
+        closeAppModal();
+        return;
+      }
+    } catch (_) {}
+  }
+
+  // Fallback para Google Cast SDK no navegador
+  await startGoogleCastMedia(targetCtx, castUrl);
+  stopCastDiscoveryPolling();
+  closeAppModal();
+}
+
+function rescanWifiTvsNow() {
+  if (window.AndroidCastBridge && typeof window.AndroidCastBridge.startTvDiscovery === 'function') {
+    window.AndroidCastBridge.startTvDiscovery();
+  }
+  refreshWifiTvDevicesListUI();
+}
+
 async function openCastControlModal(targetCtx) {
+  stopCastDiscoveryPolling();
+
   if (!targetCtx) {
     openAppModal('📺 Transmitir para Chromecast / Smart TV', `
       <p style="font-size:13px;color:#cbd5e1;line-height:1.5;">
@@ -3809,16 +3977,20 @@ async function openCastControlModal(targetCtx) {
   const connected = isGoogleCastConnected();
   const hasNativeBridge = Boolean(window.AndroidCastBridge);
 
-  openAppModal('📺 Central Chromecast & Smart TV', `
+  if (hasNativeBridge && typeof window.AndroidCastBridge.startTvDiscovery === 'function') {
+    window.AndroidCastBridge.startTvDiscovery();
+  }
+
+  openAppModal('📺 Conectar ao Chromecast / Smart TV', `
     <div class="cast-modal-box">
       <div class="cast-media-banner">
-        <div class="cast-Option-icon" style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#0284c7,#7c3aed);display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;">
+        <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#0284c7,#7c3aed);display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;">
           📺
         </div>
         <div class="cast-media-banner-info">
           <div class="cast-media-banner-title">${targetCtx.title || '3A Stream'}</div>
           <div class="cast-media-banner-sub">
-            ${connected ? `🟢 Conectado a: ${castEngineState.deviceName}` : `📡 Pronto para transmitir (${targetCtx.mode === 'live' ? 'Ao Vivo HLS' : 'Vídeo MP4 HD'})`}
+            ${connected ? `🟢 Conectado a: ${castEngineState.deviceName}` : `📡 Escolha sua TV abaixo (${targetCtx.mode === 'live' ? 'Ao Vivo HLS' : 'Vídeo MP4 HD'})`}
           </div>
         </div>
       </div>
@@ -3832,27 +4004,31 @@ async function openCastControlModal(targetCtx) {
         </div>
       ` : ''}
 
-      <div class="cast-options-grid">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px;">
+        <span style="font-size:12px;font-weight:800;color:#38bdf8;text-transform:uppercase;letter-spacing:0.5px;">
+          📡 TVs e Chromecasts na Mesma Rede Wi-Fi
+        </span>
+        <button type="button" onclick="rescanWifiTvsNow()" style="background:rgba(14,165,233,0.18);border:1px solid rgba(56,189,248,0.4);color:#e0f2fe;border-radius:6px;padding:3px 9px;font-size:11px;font-weight:700;cursor:pointer;">
+          🔄 Buscar TVs
+        </button>
+      </div>
+
+      <div id="castWifiTvsListContainer" class="cast-options-grid">
+        <div style="padding:12px;border-radius:9px;background:rgba(15,23,42,0.65);border:1px dashed rgba(56,189,248,0.3);color:#94a3b8;font-size:12px;text-align:center;">
+          🔍 Buscando TVs e Chromecasts na sua rede Wi-Fi...
+        </div>
+      </div>
+
+      <div class="cast-options-grid" style="margin-top:4px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;">
         <button type="button" class="cast-option-btn" id="btnModalStartGoogleCast" onclick="handleModalCastOption('google_cast')">
           <div class="cast-option-left">
             <div class="cast-option-icon">📺</div>
             <div>
-              <div class="cast-option-title">${connected ? 'Enviar este Vídeo para o Chromecast Conectado' : 'Transmitir para Chromecast / Google TV'}</div>
-              <div class="cast-option-desc">Conecta direto ao Chromecast ou TV na mesma rede Wi-Fi</div>
+              <div class="cast-option-title">${connected ? 'Reenviar Vídeo para a TV Conectada' : 'Abrir Seletor Google Cast do Sistema'}</div>
+              <div class="cast-option-desc">Abre a janela nativa do Google Cast para selecionar o Chromecast</div>
             </div>
           </div>
           <span style="color:#38bdf8;font-weight:800;font-size:13px;">▶</span>
-        </button>
-
-        <button type="button" class="cast-option-btn" onclick="handleModalCastOption('external_cast_app')">
-          <div class="cast-option-left">
-            <div class="cast-option-icon">📲</div>
-            <div>
-              <div class="cast-option-title">Transmitir via App / Smart TV (VLC, Web Video Cast, DLNA)</div>
-              <div class="cast-option-desc">Ideal para Chromecast no Android, Roku, LG WebOS, Samsung Tizen e VLC</div>
-            </div>
-          </div>
-          <span style="color:#38bdf8;font-weight:800;font-size:13px;">↗</span>
         </button>
 
         ${hasNativeBridge ? `
@@ -3860,20 +4036,31 @@ async function openCastControlModal(targetCtx) {
             <div class="cast-option-left">
               <div class="cast-option-icon">📡</div>
               <div>
-                <div class="cast-option-title">Espelhamento Sem Fio do Android (Smart View / Cast)</div>
-                <div class="cast-option-desc">Abre o painel nativo de transmissão de tela do seu celular Android</div>
+                <div class="cast-option-title">Transmitir Tela / Smart View do Android</div>
+                <div class="cast-option-desc">Lista todas as TVs Sem Fio / Miracast / Chromecast nas configurações do Android</div>
               </div>
             </div>
             <span style="color:#38bdf8;font-weight:800;font-size:13px;">⚙️</span>
           </button>
         ` : ''}
 
+        <button type="button" class="cast-option-btn" onclick="handleModalCastOption('external_cast_app')">
+          <div class="cast-option-left">
+            <div class="cast-option-icon">📲</div>
+            <div>
+              <div class="cast-option-title">Transmitir via App Externo (VLC / Web Video Cast)</div>
+              <div class="cast-option-desc">Abre o vídeo em outro aplicativo instalado no aparelho</div>
+            </div>
+          </div>
+          <span style="color:#38bdf8;font-weight:800;font-size:13px;">↗</span>
+        </button>
+
         <button type="button" class="cast-option-btn" id="btnModalCopyCastUrl" onclick="handleModalCastOption('copy_url')">
           <div class="cast-option-left">
             <div class="cast-option-icon">🔗</div>
             <div>
-              <div class="cast-option-title" id="lblModalCopyCastTitle">Copiar Link Direto do Stream para Smart TV / VLC</div>
-              <div class="cast-option-desc" id="lblModalCopyCastDesc">Gera o link desbloqueado na sua rede Wi-Fi para colar em qualquer player</div>
+              <div class="cast-option-title" id="lblModalCopyCastTitle">Copiar Link Direto do Stream (Rede Wi-Fi)</div>
+              <div class="cast-option-desc" id="lblModalCopyCastDesc">Gera o link desbloqueado na sua rede Wi-Fi</div>
             </div>
           </div>
           <span style="color:#38bdf8;font-weight:800;font-size:13px;">📋</span>
@@ -3881,6 +4068,9 @@ async function openCastControlModal(targetCtx) {
       </div>
     </div>
   `);
+
+  refreshWifiTvDevicesListUI();
+  castEngineState.discoveryPollTimer = setInterval(refreshWifiTvDevicesListUI, 1000);
 }
 
 async function handleModalCastOption(option) {
@@ -3891,14 +4081,15 @@ async function handleModalCastOption(option) {
     const btn = document.getElementById('btnModalStartGoogleCast');
     if (btn) {
       const titleEl = btn.querySelector('.cast-option-title');
-      if (titleEl) titleEl.textContent = '⏳ Conectando ao dispositivo de transmissão...';
+      if (titleEl) titleEl.textContent = '⏳ Abrindo seletor Google Cast...';
     }
     const ok = await startGoogleCastMedia(targetCtx);
     if (ok) {
+      stopCastDiscoveryPolling();
       closeAppModal();
     } else if (btn) {
       const titleEl = btn.querySelector('.cast-option-title');
-      if (titleEl) titleEl.textContent = ' Selecionar Receptor (Chromecast / Smart TV)';
+      if (titleEl) titleEl.textContent = 'Abrir Seletor Google Cast do Sistema';
     }
     return;
   }
@@ -3907,6 +4098,7 @@ async function handleModalCastOption(option) {
     const streamInfo = await resolveCastableStreamInfo(targetCtx);
     const targetUrl = streamInfo.externalAppUrl || streamInfo.primaryUrl;
     if (window.AndroidCastBridge) {
+      stopCastDiscoveryPolling();
       closeAppModal();
       window.AndroidCastBridge.launchExternalCastIntent(
         targetUrl,
@@ -3915,22 +4107,22 @@ async function handleModalCastOption(option) {
       );
       return;
     }
-    // Em navegadores mobile Android fora do APK, aciona intent Android para VLC / Cast Players
     if (/Android/i.test(navigator.userAgent || '')) {
       const cleanNoProto = targetUrl.replace(/^https?:\/\//i, '');
       const scheme = /^https:\/\//i.test(targetUrl) ? 'https' : 'http';
       const intentUrl = `intent://${cleanNoProto}#Intent;scheme=${scheme};type=${streamInfo.contentType};S.title=${encodeURIComponent(targetCtx.title || '3A Stream')};end`;
+      stopCastDiscoveryPolling();
       closeAppModal();
       window.location.href = intentUrl;
       return;
     }
-    // Em PC Desktop, abre ou copia para VLC
     window.open(targetUrl, '_blank', 'noopener,noreferrer');
     return;
   }
 
   if (option === 'system_cast_settings') {
     if (window.AndroidCastBridge) {
+      stopCastDiscoveryPolling();
       closeAppModal();
       window.AndroidCastBridge.openSystemCastSettings();
     }
@@ -3956,6 +4148,18 @@ async function handleModalCastOption(option) {
 
 function controlActiveCastSession(command) {
   try {
+    if (window.AndroidCastBridge && typeof window.AndroidCastBridge.controlNativeCast === 'function' && castEngineState.nativeConnected) {
+      window.AndroidCastBridge.controlNativeCast(command);
+      if (command === 'disconnect') {
+        castEngineState.nativeConnected = false;
+        castEngineState.isConnected = false;
+        syncAllCastButtonsUI();
+        stopCastDiscoveryPolling();
+        closeAppModal();
+      }
+      return;
+    }
+
     if (!window.cast || !window.cast.framework) return;
     const context = cast.framework.CastContext.getInstance();
     const session = context.getCurrentSession();
@@ -3966,6 +4170,7 @@ function controlActiveCastSession(command) {
       if (session) session.endSession(true);
       castEngineState.isConnected = false;
       syncAllCastButtonsUI();
+      stopCastDiscoveryPolling();
       closeAppModal();
       return;
     }
@@ -3985,4 +4190,5 @@ function controlActiveCastSession(command) {
     console.warn('Erro no controle remoto Chromecast:', err);
   }
 }
+
 
