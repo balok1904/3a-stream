@@ -1932,6 +1932,141 @@ dialog.app-dialog::backdrop {
   padding: 0 4px;
 }
 
+/* Barra de progresso no rodapé da miniatura do episódio / filme */
+.ep-watch-progress-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
+  background: rgba(15, 23, 42, 0.85);
+  z-index: 7;
+  overflow: hidden;
+}
+
+.ep-watch-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #06b6d4 0%, #38bdf8 55%, #a855f7 100%);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.85);
+  transition: width 0.25s ease;
+}
+
+/* Barra de progresso e tempo assistido embaixo do card do episódio */
+.ep-watch-status-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 2px 4px 0;
+}
+
+.ep-watch-underbar {
+  width: 100%;
+  height: 5px;
+  background: rgba(30, 41, 59, 0.9);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+}
+
+.ep-watch-underbar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #10b981 0%, #06b6d4 55%, #8b5cf6 100%);
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.ep-watch-time-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #38bdf8;
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* Modal de Pergunta: Reiniciar ou Retomar */
+.resume-prompt-box {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 0 2px;
+}
+
+.resume-prompt-info {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.resume-prompt-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.resume-prompt-sub {
+  font-size: 12px;
+  color: #38bdf8;
+  font-weight: 600;
+}
+
+.resume-choice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.btn-resume-play {
+  background: linear-gradient(135deg, #059669 0%, #0ea5e9 100%);
+  color: #ffffff;
+  border: 1px solid rgba(110, 231, 183, 0.6);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: 0 6px 18px rgba(14, 165, 233, 0.35);
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.btn-resume-play:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.12);
+}
+
+.btn-restart-play {
+  background: rgba(30, 41, 59, 0.92);
+  color: #f1f5f9;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-restart-play:hover {
+  transform: translateY(-2px);
+  background: rgba(51, 65, 85, 0.95);
+  border-color: #38bdf8;
+}
+
 /* =========================================================
    6. PLAYER DE CINEMA DEDICADO (100% TELA CHEIA + CONTROLES CENTRAIS + DOWNLOAD MP4)
    ========================================================= */
@@ -1951,13 +2086,13 @@ dialog.app-dialog::backdrop {
   left: 0;
   right: 0;
   z-index: 45;
-  min-height: 56px;
+  min-height: 48px;
   background: linear-gradient(180deg, rgba(6, 8, 15, 0.94) 0%, rgba(6, 8, 15, 0.68) 75%, transparent 100%);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px max(18px, env(safe-area-inset-right, 18px)) 16px max(18px, env(safe-area-inset-left, 18px));
-  gap: 10px;
+  padding: 8px max(14px, env(safe-area-inset-right, 14px)) 12px max(14px, env(safe-area-inset-left, 14px));
+  gap: 8px;
   flex-wrap: wrap;
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
@@ -1968,41 +2103,58 @@ dialog.app-dialog::backdrop {
   pointer-events: none;
 }
 
-/* Botão de Voltar no canto superior esquerdo disponível apenas quando ativar a tela com toque */
+/* Botão de Voltar no canto superior esquerdo proporcional e responsivo em todas as resoluções */
 .cinema-back-top-left-btn {
-  background: linear-gradient(135deg, #7c3aed 0%, #0284c7 55%, #06b6d4 100%);
-  border: 1.5px solid rgba(103, 232, 249, 0.65);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.92) 0%, rgba(2, 132, 199, 0.92) 55%, rgba(6, 182, 212, 0.95) 100%);
+  border: 1px solid rgba(103, 232, 249, 0.5);
   color: #ffffff;
-  height: 38px;
-  padding: 0 14px;
-  border-radius: 999px;
+  height: clamp(27px, 4vh, 33px);
+  padding: 0 clamp(9px, 1.4vw, 13px);
+  border-radius: 8px;
   font-family: inherit;
-  font-size: 13px;
-  font-weight: 800;
+  font-size: clamp(11px, 1.3vw, 12.5px);
+  font-weight: 700;
+  line-height: 1;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  gap: 5px;
   flex-shrink: 0;
-  box-shadow: 0 6px 20px rgba(6, 182, 212, 0.45), 0 0 14px rgba(124, 58, 237, 0.4);
-  transition: transform 0.15s ease, filter 0.15s ease;
+  box-shadow: 0 3px 10px rgba(6, 182, 212, 0.28);
+  transition: transform 0.15s ease, filter 0.15s ease, border-color 0.15s ease;
 }
 
 .cinema-back-top-left-btn:hover,
 .cinema-back-top-left-btn:active {
-  transform: scale(1.04);
-  filter: brightness(1.15);
+  transform: scale(1.03);
+  filter: brightness(1.12);
 }
 
-.cinema-back-icon {
-  font-size: 16px;
+.cinema-back-top-left-btn.dpad-focused,
+.cinema-back-top-left-btn:focus-visible {
+  outline: none !important;
+  border-color: #67e8f9 !important;
+  transform: none !important;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.45) !important;
+}
+
+.cinema-back-svg {
+  width: clamp(12px, 1.4vw, 14px);
+  height: clamp(12px, 1.4vw, 14px);
+  flex-shrink: 0;
+  display: block;
+}
+
+.cinema-back-text {
   line-height: 1;
+  white-space: nowrap;
 }
 
 .cinema-top-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   overflow: hidden;
   min-width: 0;
   flex: 1;
@@ -2013,7 +2165,7 @@ dialog.app-dialog::backdrop {
 }
 
 .cinema-titles h3 {
-  font-size: clamp(12.5px, 2vw, 14.5px);
+  font-size: clamp(12px, 1.8vw, 14px);
   font-weight: 700;
   color: #ffffff;
   white-space: nowrap;
@@ -2022,7 +2174,7 @@ dialog.app-dialog::backdrop {
 }
 
 .cinema-titles span {
-  font-size: 11px;
+  font-size: clamp(10px, 1.4vw, 11px);
   color: #38bdf8;
   display: block;
   white-space: nowrap;
@@ -2043,15 +2195,16 @@ dialog.app-dialog::backdrop {
   backdrop-filter: blur(8px);
   color: #f3f4f6;
   border: 1px solid rgba(56, 189, 248, 0.28);
-  padding: 6px 10px;
-  border-radius: 8px;
+  height: clamp(27px, 4vh, 32px);
+  padding: 0 clamp(8px, 1.2vw, 10px);
+  border-radius: 7px;
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: clamp(10.5px, 1.2vw, 11.5px);
   font-weight: 700;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   transition: all 0.15s;
 }
 
@@ -2106,8 +2259,8 @@ dialog.app-dialog::backdrop {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: clamp(22px, 5vw, 54px);
-  padding: 14px 26px;
+  gap: clamp(18px, 4.5vw, 50px);
+  padding: 12px 22px;
   border-radius: 999px;
   background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0.15) 70%, transparent 100%);
   transition: opacity 0.25s ease, transform 0.25s ease;
@@ -2125,8 +2278,8 @@ dialog.app-dialog::backdrop {
   backdrop-filter: blur(6px);
   border: 1.5px solid rgba(255, 255, 255, 0.28);
   color: #ffffff;
-  width: clamp(46px, 7.5vw, 56px);
-  height: clamp(46px, 7.5vw, 56px);
+  width: clamp(42px, 7vw, 54px);
+  height: clamp(42px, 7vw, 54px);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -2144,12 +2297,13 @@ dialog.app-dialog::backdrop {
 }
 
 .cinema-center-play-btn {
-  background: rgba(18, 22, 34, 0.72);
+  position: relative;
+  background: rgba(18, 22, 34, 0.78);
   backdrop-filter: blur(8px);
   border: 2.5px solid #ffffff;
   color: #ffffff;
-  width: clamp(62px, 10vw, 76px);
-  height: clamp(62px, 10vw, 76px);
+  width: clamp(58px, 9.5vw, 74px);
+  height: clamp(58px, 9.5vw, 74px);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -2159,6 +2313,24 @@ dialog.app-dialog::backdrop {
   transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
 }
 
+.cinema-center-play-btn.is-buffering::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 2.5px solid transparent;
+  border-top-color: #38bdf8;
+  border-right-color: #a855f7;
+  animation: cinemaBufferSpin 0.85s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes cinemaBufferSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .cinema-center-play-btn:hover,
 .cinema-center-play-btn:active {
   transform: scale(1.1);
@@ -2166,9 +2338,83 @@ dialog.app-dialog::backdrop {
   border-color: #67e8f9;
 }
 
-/* Oculta o botão de fullscreen isolado nativo do <video> para que o botão Voltar superior esquerdo nunca suma */
-video::-webkit-media-controls-fullscreen-button {
+/* Barra Inferior Customizada de Timeline (Substitui o controle nativo para nunca duplicar o botão de Play) */
+.cinema-bottom-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 42;
+  background: linear-gradient(0deg, rgba(6, 8, 15, 0.94) 0%, rgba(6, 8, 15, 0.65) 75%, transparent 100%);
+  padding: 14px max(18px, env(safe-area-inset-right, 18px)) max(12px, env(safe-area-inset-bottom, 12px)) max(18px, env(safe-area-inset-left, 18px));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.cinema-bottom-bar.bottombar-hidden {
+  opacity: 0;
+  transform: translateY(100%);
+  pointer-events: none;
+}
+
+.cinema-time-lbl {
+  font-size: 12px;
+  font-weight: 700;
+  color: #e2e8f0;
+  font-variant-numeric: tabular-nums;
+  min-width: 42px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.cinema-seek-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.35);
+  outline: none;
+  cursor: pointer;
+}
+
+.cinema-seek-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #38bdf8;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
+  cursor: pointer;
+}
+
+.cinema-mute-btn {
+  background: rgba(20, 26, 42, 0.85);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #ffffff;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Oculta qualquer botão central de Play/Pause ou Fullscreen nativo do WebView/Chromium */
+video::-webkit-media-controls-fullscreen-button,
+video::-webkit-media-controls-overlay-play-button,
+video::-webkit-media-controls-start-playback-button {
   display: none !important;
+  -webkit-appearance: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 /* Modos de Preenchimento de Vídeo (Tela Cheia 100% / Original / Zoom) */

@@ -1039,6 +1039,179 @@ function downloadActiveSeriesEpisode() {
 }
 
 // ============================================================================
+// BARRA DE PROGRESSO DE EPISÓDIOS/FILMES + MODAL "REINICIAR OU RETOMAR"
+// ============================================================================
+const WATCH_PROGRESS_STORAGE_KEY = '3a_watch_progress_v1';
+let isUserDraggingTimeline = false;
+let lastProgressSavedAtMs = 0;
+
+function readAllWatchProgressMap() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(WATCH_PROGRESS_STORAGE_KEY) || '{}');
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeAllWatchProgressMap(mapObj) {
+  try {
+    localStorage.setItem(WATCH_PROGRESS_STORAGE_KEY, JSON.stringify(mapObj || {}));
+  } catch (_) {}
+}
+
+function getEpisodeProgressKey(seriesItem, seasonKey, ep, epIdx = 0) {
+  if (!seriesItem || !ep) return '';
+  const sId = seriesItem.series_id || seriesItem.id || seriesItem.name || 'serie';
+  const epId = ep.id || ep.episode_num || (epIdx + 1);
+  return `ep_${sId}_S${seasonKey}_E${epId}`;
+}
+
+function getVodProgressKey(vodItem) {
+  if (!vodItem) return '';
+  const vId = vodItem.stream_id || vodItem.id || vodItem.name || 'vod';
+  return `vod_${vId}`;
+}
+
+function getWatchProgressByKey(key) {
+  if (!key) return null;
+  const map = readAllWatchProgressMap();
+  const entry = map[key];
+  if (!entry || typeof entry.currentTime !== 'number' || entry.currentTime < 5) return null;
+  return entry;
+}
+
+function parseFallbackDurationSeconds(durationStr, defaultSec = 2700) {
+  if (!durationStr) return defaultSec;
+  const str = String(durationStr).trim();
+  const hms = str.match(/^(\d+):(\d{1,2}):(\d{1,2})$/);
+  if (hms) {
+    return Number(hms[1]) * 3600 + Number(hms[2]) * 60 + Number(hms[3]);
+  }
+  const mins = str.match(/(\d+)\s*m/i);
+  if (mins) {
+    return Number(mins[1]) * 60;
+  }
+  return defaultSec;
+}
+
+function saveWatchProgressByKey(key, currentTimeSec, durationSec, fallbackDurationStr = '') {
+  if (!key) return;
+  const cur = Number(currentTimeSec || 0);
+  if (!Number.isFinite(cur) || cur < 5) return;
+
+  let dur = Number(durationSec || 0);
+  if (!Number.isFinite(dur) || dur <= 0) {
+    dur = parseFallbackDurationSeconds(fallbackDurationStr, key.startsWith('vod_') ? 5400 : 2700);
+  }
+  if (dur < cur) dur = Math.max(cur * 1.15, 2700);
+
+  const percent = Math.min(100, Math.max(3, Math.round((cur / dur) * 100)));
+  const map = readAllWatchProgressMap();
+  map[key] = {
+    currentTime: Math.floor(cur),
+    duration: Math.floor(dur),
+    percent,
+    updatedAt: Date.now()
+  };
+
+  // Mantém até 300 registros mais recentes no cache
+  const keys = Object.keys(map);
+  if (keys.length > 300) {
+    keys
+      .sort((a, b) => (map[b].updatedAt || 0) - (map[a].updatedAt || 0))
+      .slice(300)
+      .forEach(k => delete map[k]);
+  }
+  writeAllWatchProgressMap(map);
+}
+
+function clearWatchProgressByKey(key) {
+  if (!key) return;
+  const map = readAllWatchProgressMap();
+  if (map[key]) {
+    delete map[key];
+    writeAllWatchProgressMap(map);
+  }
+}
+
+function saveCurrentCinemaWatchProgress() {
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  if (!cinemaVideo) return;
+  const cur = Number(cinemaVideo.currentTime || 0);
+  const dur = Number(cinemaVideo.duration || 0);
+  if (cur < 5) return;
+
+  if (currentCinemaContext.mode === 'series' && activeSeriesItem && currentCinemaContext.episode) {
+    const ep = currentCinemaContext.episode;
+    const key = getEpisodeProgressKey(activeSeriesItem, activeSeasonKey, ep, activeEpisodeIndex);
+    saveWatchProgressByKey(key, cur, dur, ep.duration);
+  } else if (currentCinemaContext.mode === 'vod' && currentCinemaContext.item) {
+    const item = currentCinemaContext.item;
+    const key = getVodProgressKey(item);
+    saveWatchProgressByKey(key, cur, dur, item.duration);
+  }
+}
+
+function formatClockTime(totalSeconds) {
+  const secNum = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const hrs = Math.floor(secNum / 3600);
+  const mins = Math.floor((secNum % 3600) / 60);
+  const secs = secNum % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+function formatMinutesWatchedLabel(totalSeconds) {
+  const secNum = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  if (secNum < 60) {
+    return `${secNum}s`;
+  }
+  const mins = Math.floor(secNum / 60);
+  return `${mins} min`;
+}
+
+let activeResumeChoiceCallback = null;
+
+function promptResumeOrRestartPlayback(itemTitle, savedProgress, onChoice) {
+  activeResumeChoiceCallback = onChoice;
+  const watchedTimeLabel = formatMinutesWatchedLabel(savedProgress.currentTime);
+  const clockStamp = formatClockTime(savedProgress.currentTime);
+  const pct = savedProgress.percent || 10;
+
+  openAppModal('Continuar Assistindo?', `
+    <div class="resume-prompt-box">
+      <div class="resume-prompt-info">
+        Você já assistiu <strong>${watchedTimeLabel}</strong> (<strong>${clockStamp}</strong> • ${pct}%) de:<br/>
+        <span style="color:#f4f4f5;font-weight:700;">${itemTitle}</span>
+        <div class="ep-watch-underbar" style="margin-top:8px;height:6px;">
+          <div class="ep-watch-underbar-fill" style="width:${pct}%;"></div>
+        </div>
+      </div>
+      <div class="resume-choice-grid">
+        <button type="button" class="btn-restart-play focusable" onclick="handleResumeModalDecision('restart')">
+          🔄 Reiniciar
+        </button>
+        <button type="button" class="btn-resume-play focusable" onclick="handleResumeModalDecision('resume')">
+          ▶️ Retomar (${clockStamp})
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+function handleResumeModalDecision(decision) {
+  const cb = activeResumeChoiceCallback;
+  activeResumeChoiceCallback = null;
+  closeAppModal();
+  if (typeof cb === 'function') {
+    cb(decision);
+  }
+}
+
+// ============================================================================
 // CONTROLES CENTRAIS DO PLAYER DE CINEMA (-10s, ANTERIOR, PLAY/PAUSE, PRÓXIMO, +10s)
 // ============================================================================
 function syncCenterPlayPauseIcon() {
@@ -1051,6 +1224,84 @@ function syncCenterPlayPauseIcon() {
   pauseIcon.classList.toggle('hidden', isPaused);
 }
 
+function setCinemaBufferingState(isBuffering) {
+  const centerBtn = document.getElementById('btnCenterPlayPause');
+  if (centerBtn) {
+    centerBtn.classList.toggle('is-buffering', Boolean(isBuffering));
+  }
+}
+
+function syncCinemaBottomTimeline() {
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  const curEl = document.getElementById('cinemaTimeCurrent');
+  const durEl = document.getElementById('cinemaTimeDuration');
+  const slider = document.getElementById('cinemaSeekSlider');
+  if (!cinemaVideo || !curEl || !durEl || !slider) return;
+
+  const cur = Number(cinemaVideo.currentTime || 0);
+  const dur = Number(cinemaVideo.duration || 0);
+  curEl.textContent = formatClockTime(cur);
+
+  if (Number.isFinite(dur) && dur > 0) {
+    durEl.textContent = formatClockTime(dur);
+    if (!isUserDraggingTimeline) {
+      const val = Math.min(1000, Math.max(0, Math.round((cur / dur) * 1000)));
+      slider.value = String(val);
+      slider.style.setProperty('--seek-pct', `${(val / 10).toFixed(1)}%`);
+    }
+  } else {
+    durEl.textContent = '--:--';
+    if (!isUserDraggingTimeline) {
+      slider.value = '0';
+      slider.style.setProperty('--seek-pct', '0%');
+    }
+  }
+}
+
+function handleCinemaTimelineInput(sliderVal, event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  isUserDraggingTimeline = true;
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  const curEl = document.getElementById('cinemaTimeCurrent');
+  const slider = document.getElementById('cinemaSeekSlider');
+  const pct = Math.min(1000, Math.max(0, Number(sliderVal || 0)));
+  if (slider) {
+    slider.style.setProperty('--seek-pct', `${(pct / 10).toFixed(1)}%`);
+  }
+  if (cinemaVideo && curEl && Number.isFinite(cinemaVideo.duration) && cinemaVideo.duration > 0) {
+    const targetSec = (pct / 1000) * cinemaVideo.duration;
+    curEl.textContent = formatClockTime(targetSec);
+  }
+  scheduleCinemaTopbarHide();
+}
+
+function handleCinemaTimelineCommit(sliderVal, event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  const pct = Math.min(1000, Math.max(0, Number(sliderVal || 0)));
+  if (cinemaVideo && Number.isFinite(cinemaVideo.duration) && cinemaVideo.duration > 0) {
+    try {
+      cinemaVideo.currentTime = (pct / 1000) * cinemaVideo.duration;
+    } catch (_) {}
+  }
+  isUserDraggingTimeline = false;
+  syncCinemaBottomTimeline();
+  saveCurrentCinemaWatchProgress();
+  scheduleCinemaTopbarHide();
+}
+
+function toggleCinemaMute(event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  const muteBtn = document.getElementById('btnCinemaMute');
+  if (!cinemaVideo) return;
+  cinemaVideo.muted = !cinemaVideo.muted;
+  if (muteBtn) {
+    muteBtn.textContent = cinemaVideo.muted ? '🔇' : '🔊';
+  }
+  scheduleCinemaTopbarHide();
+}
+
 function toggleCinemaPlayPause(event) {
   if (event && event.stopPropagation) event.stopPropagation();
   const cinemaVideo = document.getElementById('cinemaVideoElement');
@@ -1059,6 +1310,7 @@ function toggleCinemaPlayPause(event) {
     cinemaVideo.play().catch(() => {});
   } else {
     cinemaVideo.pause();
+    saveCurrentCinemaWatchProgress();
   }
   syncCenterPlayPauseIcon();
   scheduleCinemaTopbarHide();
@@ -1076,11 +1328,14 @@ function seekCinemaVideo(deltaSeconds, event) {
       : Math.max(0, cur + deltaSeconds);
     cinemaVideo.currentTime = target;
   } catch (_) {}
+  syncCinemaBottomTimeline();
+  saveCurrentCinemaWatchProgress();
   scheduleCinemaTopbarHide();
 }
 
 function handleCinemaSkip(delta, event) {
   if (event && event.stopPropagation) event.stopPropagation();
+  saveCurrentCinemaWatchProgress();
   if (currentCinemaContext.mode === 'series') {
     skipSeriesEpisode(delta);
     scheduleCinemaTopbarHide();
@@ -1106,19 +1361,27 @@ function handleCinemaSkip(delta, event) {
 function scheduleCinemaTopbarHide() {
   const topbar = document.getElementById('cinemaTopbar');
   const centerControls = document.getElementById('cinemaCenterControls');
+  const bottomBar = document.getElementById('cinemaBottomBar');
   const cinemaVideo = document.getElementById('cinemaVideoElement');
   if (topbar) topbar.classList.remove('topbar-hidden');
   if (centerControls) centerControls.classList.remove('controls-hidden');
+  if (bottomBar) {
+    bottomBar.classList.toggle('hidden', currentCinemaContext.mode === 'live');
+    bottomBar.classList.remove('bar-hidden');
+  }
   syncCenterPlayPauseIcon();
+  syncCinemaBottomTimeline();
 
   clearTimeout(cinemaTopbarTimer);
   cinemaTopbarTimer = setTimeout(() => {
     const drawer = document.getElementById('cinemaEpisodeDrawer');
     if (drawer && !drawer.classList.contains('hidden')) return;
+    if (isUserDraggingTimeline) return;
     if (cinemaVideo && cinemaVideo.paused) return;
     if (appState.currentScreen === 'screenCinemaPlayer') {
       if (topbar) topbar.classList.add('topbar-hidden');
       if (centerControls) centerControls.classList.add('controls-hidden');
+      if (bottomBar) bottomBar.classList.add('bar-hidden');
     }
   }, 3500);
 }
@@ -1128,9 +1391,8 @@ function handleCinemaStageTap(event) {
 }
 
 /**
- * Garante que o botão de Voltar no canto superior esquerdo e os controles centrais apareçam SEMPRE que o usuário
- * tocar na tela do vídeo (mesmo quando os controles nativos de pause/barra de tempo absorvem o toque),
- * e oculte automaticamente após 3.5 segundos sem toque.
+ * Garante que o botão de Voltar no canto superior esquerdo, controles centrais e barra inferior apareçam SEMPRE
+ * que o usuário tocar na tela do vídeo e ocultem automaticamente após 3.5 segundos sem toque.
  */
 function initCinemaTouchWakeup() {
   const wrap = document.getElementById('cinemaPlayerWrap');
@@ -1151,15 +1413,47 @@ function initCinemaTouchWakeup() {
 
   if (cinemaVideo) {
     cinemaVideo.addEventListener('touchstart', wakeTopbarOnTouch, { capture: true, passive: true });
+    cinemaVideo.addEventListener('loadstart', () => setCinemaBufferingState(true));
+    cinemaVideo.addEventListener('waiting', () => setCinemaBufferingState(true));
+    cinemaVideo.addEventListener('canplay', () => {
+      setCinemaBufferingState(false);
+      syncCinemaBottomTimeline();
+    });
+    cinemaVideo.addEventListener('playing', () => {
+      setCinemaBufferingState(false);
+      syncCenterPlayPauseIcon();
+      scheduleCinemaTopbarHide();
+    });
+    cinemaVideo.addEventListener('loadedmetadata', () => {
+      syncCinemaBottomTimeline();
+    });
+    cinemaVideo.addEventListener('durationchange', () => {
+      syncCinemaBottomTimeline();
+    });
+    cinemaVideo.addEventListener('timeupdate', () => {
+      syncCinemaBottomTimeline();
+      const now = Date.now();
+      if (now - lastProgressSavedAtMs >= 3000) {
+        lastProgressSavedAtMs = now;
+        saveCurrentCinemaWatchProgress();
+      }
+    });
     cinemaVideo.addEventListener('play', () => {
       syncCenterPlayPauseIcon();
       scheduleCinemaTopbarHide();
     });
     cinemaVideo.addEventListener('pause', () => {
+      setCinemaBufferingState(false);
       syncCenterPlayPauseIcon();
+      saveCurrentCinemaWatchProgress();
       wakeTopbarOnTouch();
     });
     cinemaVideo.addEventListener('seeking', wakeTopbarOnTouch);
+    cinemaVideo.addEventListener('seeked', () => {
+      setCinemaBufferingState(false);
+      syncCinemaBottomTimeline();
+      saveCurrentCinemaWatchProgress();
+    });
   }
 
   // Impede que o fullscreen nativo isolado do <video> esconda o nosso botão de Voltar superior esquerdo
@@ -1379,6 +1673,11 @@ function renderCatalogItems(resetScroll = false) {
     const fav = isItemFavorited(appState.currentSection, item);
 
     if (isPosterMode) {
+      const vodProg = appState.currentSection === 'vod' ? getWatchProgressByKey(getVodProgressKey(item)) : null;
+      const vodProgHtml = vodProg
+        ? `<div class="ep-watch-progress-bar"><div class="ep-watch-progress-fill" style="width:${vodProg.percent}%;"></div></div>`
+        : '';
+
       card.className = `vod-poster-card focusable ${appState.currentPlayingId === itemId ? 'active' : ''}`;
       card.innerHTML = `
         <div class="vod-poster-thumb">
@@ -1387,6 +1686,7 @@ function renderCatalogItems(resetScroll = false) {
           <span class="vod-rating-badge">⭐ ${item.rating || '8.5'}</span>
           ${appState.currentSection === 'vod' ? '<span class="card-dl-btn" title="Baixar MP4">⬇ MP4</span>' : ''}
           <div class="vod-play-overlay"><span>▶</span></div>
+          ${vodProgHtml}
         </div>
         <div class="vod-poster-title">${item.name}</div>
       `;
@@ -1529,7 +1829,29 @@ function openCurrentLiveInCinema() {
   }
 }
 
-function startVodOrLiveInCinema(item, mode = 'vod') {
+function startVodOrLiveInCinema(item, mode = 'vod', forceChoice = null) {
+  if (mode === 'vod' && !forceChoice) {
+    const vodKey = getVodProgressKey(item);
+    const savedProg = getWatchProgressByKey(vodKey);
+    if (savedProg && savedProg.currentTime >= 5 && savedProg.percent < 98) {
+      promptResumeOrRestartPlayback(item.name || 'Filme', savedProg, (decision) => {
+        if (decision === 'restart') {
+          clearWatchProgressByKey(vodKey);
+          startVodOrLiveInCinema(item, mode, 'restart');
+        } else {
+          startVodOrLiveInCinema(item, mode, 'resume');
+        }
+      });
+      return;
+    }
+  }
+
+  let resumeTimeSeconds = 0;
+  if (mode === 'vod' && forceChoice === 'resume') {
+    const savedProg = getWatchProgressByKey(getVodProgressKey(item));
+    if (savedProg) resumeTimeSeconds = savedProg.currentTime;
+  }
+
   stopVideoPlayback();
   cinemaReturnScreen = 'screenCatalog';
   currentCinemaContext = { mode, item, episode: null };
@@ -1558,7 +1880,7 @@ function startVodOrLiveInCinema(item, mode = 'vod') {
   cinemaVideo.onended = null;
 
   destroyPlayers();
-  startStreamOnVideoElement(cinemaVideo, item.streamUrl, item);
+  startStreamOnVideoElement(cinemaVideo, item.streamUrl, item, resumeTimeSeconds);
 }
 
 // ============================================================================
@@ -1765,12 +2087,39 @@ function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
   return candidates;
 }
 
-function startStreamOnVideoElement(video, streamUrl, item = {}) {
+function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSeconds = 0) {
   video.muted = false;
   video.volume = 1.0;
   video.onerror = null;
   // Remove crossorigin na carga inicial para nunca bloquear redirecionamentos 302 CDN (ex: r2-auth.atlaspainel.net)
   video.removeAttribute('crossorigin');
+
+  if (video.id === 'cinemaVideoElement') {
+    setCinemaBufferingState(true);
+  }
+
+  let hasAppliedResumeSeek = false;
+  const applyResumeSeekIfNeeded = () => {
+    if (hasAppliedResumeSeek || !(resumeTimeSeconds > 2)) return;
+    try {
+      if (video.readyState >= 1) {
+        hasAppliedResumeSeek = true;
+        video.currentTime = resumeTimeSeconds;
+      }
+    } catch (_) {}
+  };
+
+  if (resumeTimeSeconds > 2) {
+    const onceSeekHandler = () => {
+      applyResumeSeekIfNeeded();
+      if (hasAppliedResumeSeek) {
+        video.removeEventListener('loadedmetadata', onceSeekHandler);
+        video.removeEventListener('canplay', onceSeekHandler);
+      }
+    };
+    video.addEventListener('loadedmetadata', onceSeekHandler);
+    video.addEventListener('canplay', onceSeekHandler);
+  }
 
   const rawStreamUrl = extractRawStreamUrl(streamUrl, item);
   const rawCheck = (rawStreamUrl || streamUrl || '').toLowerCase();
@@ -1792,6 +2141,7 @@ function startStreamOnVideoElement(video, streamUrl, item = {}) {
     hlsInstance.loadSource(primaryUrl);
     hlsInstance.attachMedia(video);
     hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+      applyResumeSeekIfNeeded();
       video.play().catch(() => {});
     });
     hlsInstance.on(Hls.Events.ERROR, (event, data) => {
@@ -1816,6 +2166,9 @@ function startStreamOnVideoElement(video, streamUrl, item = {}) {
         video.play().catch(() => {});
       } else {
         video.onerror = null;
+        if (video.id === 'cinemaVideoElement') {
+          setCinemaBufferingState(false);
+        }
       }
     };
     video.src = primaryUrl;
@@ -1872,6 +2225,58 @@ function parseRawXtreamSeriesData(rawData, seriesItem, cleanBase, username, pass
     rating: info.rating || '8.5'
   };
   return true;
+}
+
+function updateSeriesHeroWatchButton() {
+  if (!activeSeriesItem || !activeSeriesItem.seasons) return;
+  const watchBtn = document.getElementById('btnDetailPrimaryWatch');
+  if (!watchBtn) return;
+
+  const seasonKeys = Object.keys(activeSeriesItem.seasons);
+  if (seasonKeys.length === 0) {
+    watchBtn.textContent = '▶ Sem episódios disponíveis';
+    watchBtn.onclick = null;
+    return;
+  }
+
+  // Verifica se há algum episódio assistido recentemente nesta série para destacar no botão principal
+  let targetSeason = activeSeasonKey || seasonKeys[0];
+  let targetIdx = activeEpisodeIndex || 0;
+  let latestTimestamp = 0;
+
+  seasonKeys.forEach(sk => {
+    const eps = activeSeriesItem.seasons[sk] || [];
+    eps.forEach((ep, idx) => {
+      const prog = getWatchProgressByKey(getEpisodeProgressKey(activeSeriesItem, sk, ep, idx));
+      if (prog && prog.updatedAt && prog.updatedAt > latestTimestamp) {
+        latestTimestamp = prog.updatedAt;
+        targetSeason = sk;
+        targetIdx = idx;
+      }
+    });
+  });
+
+  const seasonEps = activeSeriesItem.seasons[targetSeason] || [];
+  const ep = seasonEps[targetIdx] || seasonEps[0];
+  if (!ep) {
+    watchBtn.textContent = '▶ Sem episódios disponíveis';
+    watchBtn.onclick = null;
+    return;
+  }
+
+  const epNum = ep.episode_num || (targetIdx + 1);
+  const epCode = `S${String(targetSeason).padStart(2, '0')}E${String(epNum).padStart(2, '0')}`;
+  const cleanEpLabel = ep.title && ep.title.includes(epCode)
+    ? ep.title.replace(activeSeriesItem.name, '').trim()
+    : `${epCode} - Episodio ${epNum}`;
+  const prog = getWatchProgressByKey(getEpisodeProgressKey(activeSeriesItem, targetSeason, ep, targetIdx));
+
+  if (prog && prog.currentTime >= 5) {
+    watchBtn.textContent = `▶ Continuar ${cleanEpLabel} (${formatMinutesWatchedLabel(prog.currentTime)})`;
+  } else {
+    watchBtn.textContent = `▶ Assistir ${cleanEpLabel}`;
+  }
+  watchBtn.onclick = () => startSeriesEpisodeInCinema(targetSeason, targetIdx);
 }
 
 async function openSeriesDetailScreen(seriesItem) {
@@ -1987,19 +2392,7 @@ async function openSeriesDetailScreen(seriesItem) {
   activeEpisodeIndex = 0;
   activeDetailTab = `season_${activeSeasonKey}`;
 
-  const firstSeasonEps = seriesItem.seasons[activeSeasonKey] || [];
-  const firstEp = firstSeasonEps[0];
-  const watchBtn = document.getElementById('btnDetailPrimaryWatch');
-  if (firstEp) {
-    const epCode = `S${String(activeSeasonKey).padStart(2, '0')}E${String(firstEp.episode_num || 1).padStart(2, '0')}`;
-    const cleanEpLabel = firstEp.title.includes(epCode) ? firstEp.title.replace(seriesItem.name, '').trim() : `${epCode} - Episodio ${firstEp.episode_num || 1}`;
-    watchBtn.textContent = `▶ Assistir ${cleanEpLabel}`;
-    watchBtn.onclick = () => startSeriesEpisodeInCinema(activeSeasonKey, 0);
-  } else {
-    watchBtn.textContent = `▶ Sem episódios disponíveis`;
-    watchBtn.onclick = null;
-  }
-
+  updateSeriesHeroWatchButton();
   syncSeriesDetailFavoriteButton();
   renderMediaDetailTabs();
   navigateToScreen('screenMediaDetail');
@@ -2078,7 +2471,7 @@ function renderMediaDetailTabs() {
     return;
   }
 
-  // Aba de Temporada (Exibe todos os Episódios em Cards 16:9 + botão de Download MP4)
+  // Aba de Temporada (Exibe todos os Episódios em Cards 16:9 + Barra de Progresso + Download MP4)
   const episodes = (activeSeriesItem.seasons && activeSeriesItem.seasons[activeSeasonKey]) || [];
   if (episodes.length === 0) {
     contentPanel.innerHTML = `<p style="color:#9ca3af;font-size:13px;">Nenhum episódio encontrado nesta temporada.</p>`;
@@ -2098,6 +2491,26 @@ function renderMediaDetailTabs() {
     card.type = 'button';
     card.className = 'ep-card-16x9 focusable';
     const thumb = ep.thumbnail || activeSeriesItem.poster || 'logo-3a-stream.jpg';
+    const progKey = getEpisodeProgressKey(activeSeriesItem, activeSeasonKey, ep, idx);
+    const prog = getWatchProgressByKey(progKey);
+
+    const thumbProgressBarHtml = prog
+      ? `<div class="ep-watch-progress-bar"><div class="ep-watch-progress-fill" style="width:${prog.percent}%;"></div></div>`
+      : '';
+
+    const underCardProgressHtml = prog
+      ? `
+        <div class="ep-watch-status-row">
+          <div class="ep-watch-underbar">
+            <div class="ep-watch-underbar-fill" style="width:${prog.percent}%;"></div>
+          </div>
+          <div class="ep-watch-time-label">
+            <span>⏱ ${formatMinutesWatchedLabel(prog.currentTime)} assistidos</span>
+            <span>${prog.percent}%</span>
+          </div>
+        </div>
+      `
+      : '';
 
     card.innerHTML = `
       <div class="ep-thumb-wrap">
@@ -2107,8 +2520,10 @@ function renderMediaDetailTabs() {
         </div>
         <div class="ep-corner-badge">▶</div>
         <span class="card-dl-btn" title="Baixar Episódio em MP4">⬇ MP4</span>
+        ${thumbProgressBarHtml}
       </div>
       <div class="ep-card-caption">${ep.title}</div>
+      ${underCardProgressHtml}
     `;
 
     const dlBtnEl = card.querySelector('.card-dl-btn');
@@ -2134,11 +2549,35 @@ function backFromMediaDetail() {
 // ============================================================================
 // PLAYER DE CINEMA DEDICADO COM BOTÃO "PULAR EPISÓDIO" E GAVETA LATERAL
 // ============================================================================
-function startSeriesEpisodeInCinema(seasonKey, epIndex) {
+function startSeriesEpisodeInCinema(seasonKey, epIndex, forceChoice = null) {
   if (!activeSeriesItem || !activeSeriesItem.seasons) return;
   const seasonEps = activeSeriesItem.seasons[seasonKey] || [];
   const ep = seasonEps[epIndex];
   if (!ep) return;
+
+  const progKey = getEpisodeProgressKey(activeSeriesItem, seasonKey, ep, epIndex);
+  const savedProg = getWatchProgressByKey(progKey);
+
+  // Se o episódio já possui progresso salvo e o usuário ainda não escolheu Reiniciar ou Retomar, exibe a pergunta com 2 botões!
+  if (!forceChoice && savedProg && savedProg.currentTime >= 5 && savedProg.percent < 98) {
+    const epTitleLabel = ep.title || `${activeSeriesItem.name} - Episódio ${ep.episode_num || epIndex + 1}`;
+    promptResumeOrRestartPlayback(epTitleLabel, savedProg, (decision) => {
+      if (decision === 'restart') {
+        clearWatchProgressByKey(progKey);
+        renderMediaDetailTabs();
+        updateSeriesHeroWatchButton();
+        startSeriesEpisodeInCinema(seasonKey, epIndex, 'restart');
+      } else {
+        startSeriesEpisodeInCinema(seasonKey, epIndex, 'resume');
+      }
+    });
+    return;
+  }
+
+  let resumeTimeSeconds = 0;
+  if (forceChoice === 'resume' && savedProg) {
+    resumeTimeSeconds = savedProg.currentTime;
+  }
 
   addRecentItem('series', activeSeriesItem);
   cinemaReturnScreen = 'screenMediaDetail';
@@ -2152,12 +2591,7 @@ function startSeriesEpisodeInCinema(seasonKey, epIndex) {
     if (el) el.classList.remove('hidden');
   });
 
-  // Atualiza botão principal da tela de detalhes para continuar do episódio atual
-  const watchBtn = document.getElementById('btnDetailPrimaryWatch');
-  if (watchBtn) {
-    watchBtn.textContent = `▶ Continuar S${String(seasonKey).padStart(2, '0')}E${String(ep.episode_num || epIndex + 1).padStart(2, '0')} - Episodio ${ep.episode_num || epIndex + 1}`;
-    watchBtn.onclick = () => startSeriesEpisodeInCinema(activeSeasonKey, activeEpisodeIndex);
-  }
+  updateSeriesHeroWatchButton();
 
   navigateToScreen('screenCinemaPlayer');
   scheduleCinemaTopbarHide();
@@ -2184,7 +2618,7 @@ function startSeriesEpisodeInCinema(seasonKey, epIndex) {
   if (!cinemaVideo) return;
 
   destroyPlayers();
-  startStreamOnVideoElement(cinemaVideo, ep.streamUrl, ep);
+  startStreamOnVideoElement(cinemaVideo, ep.streamUrl, ep, resumeTimeSeconds);
 
   // Auto-avança para o próximo episódio ao terminar o vídeo!
   cinemaVideo.onended = () => {
@@ -2194,6 +2628,7 @@ function startSeriesEpisodeInCinema(seasonKey, epIndex) {
 
 function skipSeriesEpisode(delta) {
   if (!activeSeriesItem || !activeSeriesItem.seasons) return;
+  saveCurrentCinemaWatchProgress();
   const seasonEps = activeSeriesItem.seasons[activeSeasonKey] || [];
   const targetIndex = activeEpisodeIndex + delta;
 
@@ -2233,11 +2668,14 @@ function renderCinemaDrawerEpisodes() {
 
   const seasonEps = activeSeriesItem.seasons[activeSeasonKey] || [];
   seasonEps.forEach((ep, idx) => {
+    const prog = getWatchProgressByKey(getEpisodeProgressKey(activeSeriesItem, activeSeasonKey, ep, idx));
+    const progBadge = prog ? ` <span style="color:#4ade80;font-size:11px;font-weight:700;">(${prog.percent}%)</span>` : '';
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = `drawer-ep-item focusable ${idx === activeEpisodeIndex ? 'active' : ''}`;
-    btn.innerHTML = `<strong>Ep. ${ep.episode_num || idx + 1}</strong> — ${ep.title}`;
+    btn.innerHTML = `<strong>Ep. ${ep.episode_num || idx + 1}</strong> — ${ep.title}${progBadge}`;
     btn.onclick = () => {
+      saveCurrentCinemaWatchProgress();
       startSeriesEpisodeInCinema(activeSeasonKey, idx);
     };
     listEl.appendChild(btn);
@@ -2246,6 +2684,8 @@ function renderCinemaDrawerEpisodes() {
 
 function closeCinemaPlayer() {
   clearTimeout(cinemaTopbarTimer);
+  saveCurrentCinemaWatchProgress();
+  setCinemaBufferingState(false);
   const cinemaVideo = document.getElementById('cinemaVideoElement');
   destroyPlayers();
   if (cinemaVideo) {
@@ -2253,7 +2693,14 @@ function closeCinemaPlayer() {
     cinemaVideo.removeAttribute('src');
     cinemaVideo.load();
   }
-  navigateToScreen(cinemaReturnScreen || 'screenCatalog');
+  const targetScreen = cinemaReturnScreen || 'screenCatalog';
+  navigateToScreen(targetScreen);
+  if (targetScreen === 'screenMediaDetail') {
+    updateSeriesHeroWatchButton();
+    renderMediaDetailTabs();
+  } else if (targetScreen === 'screenCatalog') {
+    renderCatalogItems(false);
+  }
 }
 
 function toggleCinemaFullscreen() {
@@ -2303,6 +2750,8 @@ function destroyPlayers() {
 }
 
 function stopVideoPlayback() {
+  saveCurrentCinemaWatchProgress();
+  setCinemaBufferingState(false);
   appState.currentPlayingId = null;
   const video = document.getElementById('iptvVideoPlayer');
   const cinemaVideo = document.getElementById('cinemaVideoElement');
