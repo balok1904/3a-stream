@@ -90,7 +90,7 @@ function verifyPasswordMatch(inputPassword, storedPasswordOrHash) {
 }
 
 // Proteção Anti-Brute-Force por IP nas rotas de Login
-const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 8);
+const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 25);
 const LOGIN_WINDOW_MS = Number(process.env.LOGIN_WINDOW_MINUTES || 10) * 60 * 1000;
 const loginAttemptsByIp = new Map();
 
@@ -399,7 +399,7 @@ function createInitialDb() {
         name: 'Balok',
         phone: '(11) 99999-0001',
         username: 'asmj10',
-        password: 'sha256:ce4ea5e1bb97e73c4d2144b19c9b75c274541edc74f14f412e3e2e9f7a6a3ed1',
+        password: 'sha256:abd2c430490bf153d05c27fbb5b9703be7153d3aaf0c61abf013d34c808b85c9',
         macAddress: '61:F3:CF:92:93:B1',
         planName: 'Plano 3A Completo 4K',
         monthlyPrice: 35.0,
@@ -1343,7 +1343,7 @@ app.post('/api/player/custom-playlist', async (req, res) => {
 // ============================================================================
 const ADMIN_MASTER_USER = process.env.ADMIN_USER || 'asmj10';
 // Hash criptográfico SHA-256 com salt (a senha em texto plano NUNCA fica exposta no código-fonte)
-const ADMIN_MASTER_PASS_HASH = 'sha256:ce4ea5e1bb97e73c4d2144b19c9b75c274541edc74f14f412e3e2e9f7a6a3ed1';
+const ADMIN_MASTER_PASS_HASH = 'sha256:abd2c430490bf153d05c27fbb5b9703be7153d3aaf0c61abf013d34c808b85c9';
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_SECRET || '3a_stream_master_secret_2026_balok_v2_shield';
 const ADMIN_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
 
