@@ -777,16 +777,348 @@ function cycleVideoAspectRatio() {
   scheduleCinemaTopbarHide();
 }
 
+let currentCinemaContext = {
+  mode: 'vod', // 'vod' | 'series' | 'live'
+  item: null,
+  episode: null
+};
+
+// ============================================================================
+// CACHE DE CATEGORIAS FIXADAS NO TOPO (FAVORITOS E RECENTEMENTE VISTO)
+// ============================================================================
+function normalizeCacheSection(section) {
+  if (section === 'soccer' || section === 'live') return 'live';
+  if (section === 'series') return 'series';
+  return 'vod';
+}
+
+function getItemUniqueKey(item) {
+  if (!item) return '';
+  return String(item.stream_id || item.series_id || item.id || item.name || '').trim();
+}
+
+function serializeCatalogItemForCache(item) {
+  if (!item) return null;
+  return {
+    stream_id: item.stream_id,
+    series_id: item.series_id,
+    id: item.id,
+    name: item.name,
+    logo: item.logo,
+    poster: item.poster,
+    category_id: item.category_id,
+    rating: item.rating,
+    year: item.year,
+    duration: item.duration,
+    streamUrl: item.streamUrl,
+    rawStreamUrl: item.rawStreamUrl,
+    fallbackTsUrl: item.fallbackTsUrl,
+    epgNow: item.epgNow,
+    epgNext: item.epgNext,
+    matchInfo: item.matchInfo,
+    isSoccer: item.isSoccer,
+    isAdult: item.isAdult
+  };
+}
+
+function resolveCachedItemsWithCatalog(section, cachedArray) {
+  if (!Array.isArray(cachedArray)) return [];
+  const norm = normalizeCacheSection(section);
+  let pool = [];
+  if (appState.catalog) {
+    if (norm === 'live') pool = appState.catalog.liveStreams || [];
+    else if (norm === 'vod') pool = appState.catalog.vodStreams || [];
+    else if (norm === 'series') pool = appState.catalog.seriesList || [];
+  }
+  const mapByKey = new Map();
+  pool.forEach(entry => {
+    const k = getItemUniqueKey(entry);
+    if (k) mapByKey.set(k, entry);
+  });
+
+  const resolved = [];
+  cachedArray.forEach(cached => {
+    if (!cached) return;
+    const k = getItemUniqueKey(cached);
+    const liveMatch = k && mapByKey.get(k);
+    const finalItem = liveMatch || cached;
+    if (section === 'soccer' && !finalItem.isSoccer) return;
+    resolved.push(finalItem);
+  });
+  return resolved;
+}
+
+function getFavoritesList(section) {
+  const norm = normalizeCacheSection(section);
+  try {
+    const raw = JSON.parse(localStorage.getItem(`3a_fav_${norm}`) || '[]');
+    return resolveCachedItemsWithCatalog(section, raw);
+  } catch (_) {
+    return [];
+  }
+}
+
+function isItemFavorited(section, item) {
+  if (!item) return false;
+  const norm = normalizeCacheSection(section);
+  const targetKey = getItemUniqueKey(item);
+  if (!targetKey) return false;
+  try {
+    const raw = JSON.parse(localStorage.getItem(`3a_fav_${norm}`) || '[]');
+    return Array.isArray(raw) && raw.some(entry => getItemUniqueKey(entry) === targetKey);
+  } catch (_) {
+    return false;
+  }
+}
+
+function toggleFavoriteItem(section, item, event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  if (!item) return false;
+  const norm = normalizeCacheSection(section);
+  const targetKey = getItemUniqueKey(item);
+  if (!targetKey) return false;
+
+  let raw = [];
+  try {
+    raw = JSON.parse(localStorage.getItem(`3a_fav_${norm}`) || '[]');
+    if (!Array.isArray(raw)) raw = [];
+  } catch (_) {
+    raw = [];
+  }
+
+  const existingIdx = raw.findIndex(entry => getItemUniqueKey(entry) === targetKey);
+  let nowFavorited = false;
+  if (existingIdx >= 0) {
+    raw.splice(existingIdx, 1);
+    nowFavorited = false;
+  } else {
+    raw.unshift(serializeCatalogItemForCache(item));
+    nowFavorited = true;
+  }
+
+  localStorage.setItem(`3a_fav_${norm}`, JSON.stringify(raw.slice(0, 200)));
+
+  if (appState.currentScreen === 'screenCatalog') {
+    renderCatalogCategories();
+    if (appState.selectedCategoryId === 'FAVORITES') {
+      renderCatalogItems(false);
+    }
+  }
+  syncCinemaFavoriteButton();
+  syncSeriesDetailFavoriteButton();
+  return nowFavorited;
+}
+
+function getRecentList(section) {
+  const norm = normalizeCacheSection(section);
+  try {
+    const raw = JSON.parse(localStorage.getItem(`3a_recent_${norm}`) || '[]');
+    return resolveCachedItemsWithCatalog(section, raw);
+  } catch (_) {
+    return [];
+  }
+}
+
+function addRecentItem(section, item) {
+  if (!item) return;
+  const norm = normalizeCacheSection(section);
+  const targetKey = getItemUniqueKey(item);
+  if (!targetKey) return;
+
+  let raw = [];
+  try {
+    raw = JSON.parse(localStorage.getItem(`3a_recent_${norm}`) || '[]');
+    if (!Array.isArray(raw)) raw = [];
+  } catch (_) {
+    raw = [];
+  }
+
+  raw = raw.filter(entry => getItemUniqueKey(entry) !== targetKey);
+  raw.unshift(serializeCatalogItemForCache(item));
+  localStorage.setItem(`3a_recent_${norm}`, JSON.stringify(raw.slice(0, 60)));
+
+  if (norm === 'vod' && item.name) {
+    const recents = (appState.preferences.recentMovies || []).filter(n => n !== item.name);
+    recents.unshift(item.name);
+    appState.preferences.recentMovies = recents.slice(0, 40);
+    localStorage.setItem('3a_recent_movies', JSON.stringify(appState.preferences.recentMovies));
+    syncSettingsLabels();
+  }
+
+  if (appState.currentScreen === 'screenCatalog') {
+    renderCatalogCategories();
+  }
+}
+
+function syncCinemaFavoriteButton() {
+  const btn = document.getElementById('btnCinemaFavorite');
+  if (!btn) return;
+  const targetItem = currentCinemaContext.mode === 'series' ? activeSeriesItem : currentCinemaContext.item;
+  const fav = isItemFavorited(currentCinemaContext.mode, targetItem);
+  btn.textContent = fav ? '⭐ Favorito' : '☆ Favorito';
+}
+
+function toggleCurrentCinemaFavorite(event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  const targetItem = currentCinemaContext.mode === 'series' ? activeSeriesItem : currentCinemaContext.item;
+  if (!targetItem) return;
+  toggleFavoriteItem(currentCinemaContext.mode, targetItem, event);
+  scheduleCinemaTopbarHide();
+}
+
+function syncSeriesDetailFavoriteButton() {
+  const btn = document.getElementById('btnDetailFavorite');
+  if (!btn || !activeSeriesItem) return;
+  const fav = isItemFavorited('series', activeSeriesItem);
+  btn.textContent = fav ? '⭐' : '☆';
+}
+
+function toggleActiveSeriesFavorite() {
+  if (!activeSeriesItem) return;
+  toggleFavoriteItem('series', activeSeriesItem);
+}
+
+// ============================================================================
+// DOWNLOAD DE VÍDEO EM .MP4 (FILMES VOD E SÉRIES)
+// ============================================================================
+function sanitizeMp4Filename(rawTitle) {
+  const cleaned = String(rawTitle || 'Video_3A_Stream')
+    .replace(/[\\/:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 95);
+  return (cleaned || 'Video_3A_Stream') + '.mp4';
+}
+
+function triggerMp4Download(streamUrl, title, item = {}) {
+  const rawUrl = extractRawStreamUrl(streamUrl, item);
+  const filename = sanitizeMp4Filename(title || (item && item.name) || 'Video_3A_Stream');
+
+  let downloadHref = '';
+  if (IS_NATIVE_APK && /^https?:\/\//i.test(rawUrl)) {
+    downloadHref = `http://127.0.0.1:34567/proxy?url=${encodeURIComponent(rawUrl)}&download=1&filename=${encodeURIComponent(filename)}`;
+  } else if (LOCAL_PC_PROXY_BASE && /^https?:\/\//i.test(rawUrl)) {
+    downloadHref = `${LOCAL_PC_PROXY_BASE}/api/proxy/stream?url=${encodeURIComponent(rawUrl)}&download=1&filename=${encodeURIComponent(filename)}`;
+  } else if (/^https?:\/\//i.test(rawUrl)) {
+    downloadHref = `/api/proxy/stream?url=${encodeURIComponent(rawUrl)}&download=1&filename=${encodeURIComponent(filename)}`;
+  } else {
+    downloadHref = streamUrl;
+  }
+
+  if (!downloadHref) return;
+  const a = document.createElement('a');
+  a.href = downloadHref;
+  a.setAttribute('download', filename);
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => a.remove(), 1200);
+}
+
+function downloadCurrentCinemaVideo(event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  if (currentCinemaContext.mode === 'series' && currentCinemaContext.episode) {
+    const ep = currentCinemaContext.episode;
+    const seriesTitle = (activeSeriesItem && activeSeriesItem.name) || 'Serie';
+    const epLabel = `S${String(activeSeasonKey).padStart(2, '0')}E${String(ep.episode_num || activeEpisodeIndex + 1).padStart(2, '0')}`;
+    triggerMp4Download(ep.streamUrl, `${seriesTitle}_${epLabel}_${ep.title || ''}`, ep);
+  } else if (currentCinemaContext.item) {
+    const item = currentCinemaContext.item;
+    triggerMp4Download(item.streamUrl, item.name, item);
+  }
+  scheduleCinemaTopbarHide();
+}
+
+function downloadActiveSeriesEpisode() {
+  if (!activeSeriesItem || !activeSeriesItem.seasons) return;
+  const seasonEps = activeSeriesItem.seasons[activeSeasonKey] || [];
+  const ep = seasonEps[activeEpisodeIndex] || seasonEps[0];
+  if (!ep) return;
+  const epLabel = `S${String(activeSeasonKey).padStart(2, '0')}E${String(ep.episode_num || 1).padStart(2, '0')}`;
+  triggerMp4Download(ep.streamUrl, `${activeSeriesItem.name}_${epLabel}_${ep.title || ''}`, ep);
+}
+
+// ============================================================================
+// CONTROLES CENTRAIS DO PLAYER DE CINEMA (-10s, ANTERIOR, PLAY/PAUSE, PRÓXIMO, +10s)
+// ============================================================================
+function syncCenterPlayPauseIcon() {
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  const playIcon = document.getElementById('iconCenterPlay');
+  const pauseIcon = document.getElementById('iconCenterPause');
+  if (!cinemaVideo || !playIcon || !pauseIcon) return;
+  const isPaused = cinemaVideo.paused || cinemaVideo.ended;
+  playIcon.classList.toggle('hidden', !isPaused);
+  pauseIcon.classList.toggle('hidden', isPaused);
+}
+
+function toggleCinemaPlayPause(event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  if (!cinemaVideo) return;
+  if (cinemaVideo.paused || cinemaVideo.ended) {
+    cinemaVideo.play().catch(() => {});
+  } else {
+    cinemaVideo.pause();
+  }
+  syncCenterPlayPauseIcon();
+  scheduleCinemaTopbarHide();
+}
+
+function seekCinemaVideo(deltaSeconds, event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  if (!cinemaVideo) return;
+  try {
+    const cur = Number(cinemaVideo.currentTime || 0);
+    const dur = Number(cinemaVideo.duration);
+    const target = Number.isFinite(dur) && dur > 0
+      ? Math.max(0, Math.min(dur - 0.5, cur + deltaSeconds))
+      : Math.max(0, cur + deltaSeconds);
+    cinemaVideo.currentTime = target;
+  } catch (_) {}
+  scheduleCinemaTopbarHide();
+}
+
+function handleCinemaSkip(delta, event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  if (currentCinemaContext.mode === 'series') {
+    skipSeriesEpisode(delta);
+    scheduleCinemaTopbarHide();
+    return;
+  }
+
+  // Se estiver em Filme (VOD) ou Canal Ao Vivo, avança/volta para o próximo/anterior da lista
+  const list = currentCinemaContext.mode === 'live'
+    ? (appState.catalog && appState.catalog.liveStreams) || []
+    : (appState.catalog && appState.catalog.vodStreams) || [];
+  if (!list.length || !currentCinemaContext.item) return;
+
+  const curKey = getItemUniqueKey(currentCinemaContext.item);
+  const idx = list.findIndex(entry => getItemUniqueKey(entry) === curKey);
+  if (idx === -1) return;
+  const nextIdx = (idx + delta + list.length) % list.length;
+  const nextItem = list[nextIdx];
+  if (nextItem) {
+    startVodOrLiveInCinema(nextItem, currentCinemaContext.mode);
+  }
+}
+
 function scheduleCinemaTopbarHide() {
   const topbar = document.getElementById('cinemaTopbar');
-  if (!topbar) return;
-  topbar.classList.remove('topbar-hidden');
+  const centerControls = document.getElementById('cinemaCenterControls');
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  if (topbar) topbar.classList.remove('topbar-hidden');
+  if (centerControls) centerControls.classList.remove('controls-hidden');
+  syncCenterPlayPauseIcon();
+
   clearTimeout(cinemaTopbarTimer);
   cinemaTopbarTimer = setTimeout(() => {
     const drawer = document.getElementById('cinemaEpisodeDrawer');
     if (drawer && !drawer.classList.contains('hidden')) return;
+    if (cinemaVideo && cinemaVideo.paused) return;
     if (appState.currentScreen === 'screenCinemaPlayer') {
-      topbar.classList.add('topbar-hidden');
+      if (topbar) topbar.classList.add('topbar-hidden');
+      if (centerControls) centerControls.classList.add('controls-hidden');
     }
   }, 3500);
 }
@@ -796,7 +1128,7 @@ function handleCinemaStageTap(event) {
 }
 
 /**
- * Garante que o botão de Voltar no canto superior esquerdo apareça SEMPRE que o usuário
+ * Garante que o botão de Voltar no canto superior esquerdo e os controles centrais apareçam SEMPRE que o usuário
  * tocar na tela do vídeo (mesmo quando os controles nativos de pause/barra de tempo absorvem o toque),
  * e oculte automaticamente após 3.5 segundos sem toque.
  */
@@ -812,7 +1144,6 @@ function initCinemaTouchWakeup() {
   };
 
   if (wrap) {
-    // Fase de captura (capture: true) garante que o toque no <video controls> mostre o botão Voltar superior esquerdo!
     wrap.addEventListener('touchstart', wakeTopbarOnTouch, { capture: true, passive: true });
     wrap.addEventListener('pointerdown', wakeTopbarOnTouch, { capture: true, passive: true });
     wrap.addEventListener('mousemove', wakeTopbarOnTouch, { passive: true });
@@ -820,7 +1151,14 @@ function initCinemaTouchWakeup() {
 
   if (cinemaVideo) {
     cinemaVideo.addEventListener('touchstart', wakeTopbarOnTouch, { capture: true, passive: true });
-    cinemaVideo.addEventListener('pause', wakeTopbarOnTouch);
+    cinemaVideo.addEventListener('play', () => {
+      syncCenterPlayPauseIcon();
+      scheduleCinemaTopbarHide();
+    });
+    cinemaVideo.addEventListener('pause', () => {
+      syncCenterPlayPauseIcon();
+      wakeTopbarOnTouch();
+    });
     cinemaVideo.addEventListener('seeking', wakeTopbarOnTouch);
   }
 
@@ -844,7 +1182,6 @@ function initCinemaTouchWakeup() {
 
 function openCatalogSection(section) {
   if (!appState.catalog) {
-    showToast('⚠️ Carregando lista...');
     return;
   }
   appState.currentSection = section;
@@ -906,6 +1243,7 @@ function renderCatalogCategories() {
     totalCount = (appState.catalog.seriesList || []).filter(i => !hiddenList.includes(String(i.category_id))).length;
   }
 
+  // 1. Categoria TODOS
   const allBtn = document.createElement('button');
   allBtn.type = 'button';
   allBtn.className = `cat-btn focusable ${appState.selectedCategoryId === 'ALL' ? 'active' : ''}`;
@@ -917,6 +1255,33 @@ function renderCatalogCategories() {
     renderCatalogItems(true);
   };
   container.appendChild(allBtn);
+
+  // 2. Categorias Fixadas no Topo: ⭐ FAVORITOS e 🕒 RECENTEMENTE VISTO (para Filmes, Séries e Ao Vivo)
+  const favCount = getFavoritesList(appState.currentSection).length;
+  const favBtn = document.createElement('button');
+  favBtn.type = 'button';
+  favBtn.className = `cat-btn cat-btn-pinned focusable ${appState.selectedCategoryId === 'FAVORITES' ? 'active' : ''}`;
+  favBtn.innerHTML = `<span class="cat-btn-label">⭐ Favoritos</span> <span class="cat-btn-count">${favCount}</span>`;
+  favBtn.onclick = () => {
+    appState.selectedCategoryId = 'FAVORITES';
+    appState.visibleLimit = 200;
+    renderCatalogCategories();
+    renderCatalogItems(true);
+  };
+  container.appendChild(favBtn);
+
+  const recentCount = getRecentList(appState.currentSection).length;
+  const recentBtn = document.createElement('button');
+  recentBtn.type = 'button';
+  recentBtn.className = `cat-btn cat-btn-pinned focusable ${appState.selectedCategoryId === 'RECENT' ? 'active' : ''}`;
+  recentBtn.innerHTML = `<span class="cat-btn-label">🕒 Recentemente Visto</span> <span class="cat-btn-count">${recentCount}</span>`;
+  recentBtn.onclick = () => {
+    appState.selectedCategoryId = 'RECENT';
+    appState.visibleLimit = 200;
+    renderCatalogCategories();
+    renderCatalogItems(true);
+  };
+  container.appendChild(recentBtn);
 
   rawCategories
     .filter(cat => !hiddenList.includes(String(cat.category_id)))
@@ -961,21 +1326,27 @@ function renderCatalogItems(resetScroll = false) {
   container.classList.toggle('vod-poster-grid-mode', isPosterMode);
 
   let items = [];
-  if (appState.currentSection === 'live') {
-    const hidden = appState.preferences.hiddenCategories.live || [];
-    items = (appState.catalog.liveStreams || []).filter(i => !hidden.includes(String(i.category_id)));
-  } else if (appState.currentSection === 'soccer') {
-    items = (appState.catalog.liveStreams || []).filter(i => i.isSoccer);
-  } else if (appState.currentSection === 'vod') {
-    const hidden = appState.preferences.hiddenCategories.vod || [];
-    items = (appState.catalog.vodStreams || []).filter(i => !hidden.includes(String(i.category_id)));
-  } else if (appState.currentSection === 'series') {
-    const hidden = appState.preferences.hiddenCategories.series || [];
-    items = (appState.catalog.seriesList || []).filter(i => !hidden.includes(String(i.category_id)));
-  }
+  if (appState.selectedCategoryId === 'FAVORITES') {
+    items = getFavoritesList(appState.currentSection);
+  } else if (appState.selectedCategoryId === 'RECENT') {
+    items = getRecentList(appState.currentSection);
+  } else {
+    if (appState.currentSection === 'live') {
+      const hidden = appState.preferences.hiddenCategories.live || [];
+      items = (appState.catalog.liveStreams || []).filter(i => !hidden.includes(String(i.category_id)));
+    } else if (appState.currentSection === 'soccer') {
+      items = (appState.catalog.liveStreams || []).filter(i => i.isSoccer);
+    } else if (appState.currentSection === 'vod') {
+      const hidden = appState.preferences.hiddenCategories.vod || [];
+      items = (appState.catalog.vodStreams || []).filter(i => !hidden.includes(String(i.category_id)));
+    } else if (appState.currentSection === 'series') {
+      const hidden = appState.preferences.hiddenCategories.series || [];
+      items = (appState.catalog.seriesList || []).filter(i => !hidden.includes(String(i.category_id)));
+    }
 
-  if (appState.selectedCategoryId !== 'ALL') {
-    items = items.filter(i => String(i.category_id) === String(appState.selectedCategoryId));
+    if (appState.selectedCategoryId !== 'ALL') {
+      items = items.filter(i => String(i.category_id) === String(appState.selectedCategoryId));
+    }
   }
 
   if (query) {
@@ -986,7 +1357,12 @@ function renderCatalogItems(resetScroll = false) {
   }
 
   if (items.length === 0) {
-    container.innerHTML = `<div style="padding:20px;color:#a1a1aa;font-size:13px;">Nenhum item encontrado nesta categoria.</div>`;
+    const emptyMsg = appState.selectedCategoryId === 'FAVORITES'
+      ? 'Você ainda não adicionou itens aos ⭐ Favoritos nesta seção. Clique na estrela (☆) em qualquer card para favoritar!'
+      : appState.selectedCategoryId === 'RECENT'
+      ? 'Nenhum item visto recentemente nesta seção.'
+      : 'Nenhum item encontrado nesta categoria.';
+    container.innerHTML = `<div style="padding:20px;color:#a1a1aa;font-size:13px;">${emptyMsg}</div>`;
     return;
   }
 
@@ -1000,17 +1376,38 @@ function renderCatalogItems(resetScroll = false) {
 
     const imgUrl = item.logo || item.poster || 'logo-3a-stream.jpg';
     const subText = item.matchInfo || item.epgNow || (item.duration ? `${item.year ? item.year + ' • ' : ''}⭐ ${item.rating || '8.5'} • ${item.duration}` : `Série • ⭐ ${item.rating || '9.0'}`);
+    const fav = isItemFavorited(appState.currentSection, item);
 
     if (isPosterMode) {
       card.className = `vod-poster-card focusable ${appState.currentPlayingId === itemId ? 'active' : ''}`;
       card.innerHTML = `
         <div class="vod-poster-thumb">
           <img src="${imgUrl}" alt="${item.name}" loading="lazy" onerror="this.src='logo-3a-stream.jpg'" />
+          <span class="card-fav-btn ${fav ? 'is-favorited' : ''}" title="Favoritar">${fav ? '⭐' : '☆'}</span>
           <span class="vod-rating-badge">⭐ ${item.rating || '8.5'}</span>
+          ${appState.currentSection === 'vod' ? '<span class="card-dl-btn" title="Baixar MP4">⬇ MP4</span>' : ''}
           <div class="vod-play-overlay"><span>▶</span></div>
         </div>
         <div class="vod-poster-title">${item.name}</div>
       `;
+
+      const favBtnEl = card.querySelector('.card-fav-btn');
+      if (favBtnEl) {
+        favBtnEl.onclick = (e) => {
+          e.stopPropagation();
+          const nextState = toggleFavoriteItem(appState.currentSection, item, e);
+          favBtnEl.classList.toggle('is-favorited', nextState);
+          favBtnEl.textContent = nextState ? '⭐' : '☆';
+        };
+      }
+
+      const dlBtnEl = card.querySelector('.card-dl-btn');
+      if (dlBtnEl) {
+        dlBtnEl.onclick = (e) => {
+          e.stopPropagation();
+          triggerMp4Download(item.streamUrl, item.name, item);
+        };
+      }
     } else {
       card.className = `channel-card focusable ${appState.currentPlayingId === itemId ? 'active' : ''}`;
       card.innerHTML = `
@@ -1019,7 +1416,18 @@ function renderCatalogItems(resetScroll = false) {
           <div class="channel-card-title">${item.name}</div>
           <div class="channel-card-sub">${subText}</div>
         </div>
+        <span class="channel-fav-btn ${fav ? 'is-favorited' : ''}" title="Favoritar">${fav ? '⭐' : '☆'}</span>
       `;
+
+      const favBtnEl = card.querySelector('.channel-fav-btn');
+      if (favBtnEl) {
+        favBtnEl.onclick = (e) => {
+          e.stopPropagation();
+          const nextState = toggleFavoriteItem('live', item, e);
+          favBtnEl.classList.toggle('is-favorited', nextState);
+          favBtnEl.textContent = nextState ? '⭐' : '☆';
+        };
+      }
     }
 
     card.onclick = () => {
@@ -1066,24 +1474,22 @@ async function playCatalogItem(item, notify = true) {
   const wasAlreadyPlaying = appState.currentPlayingId === itemId;
   appState.currentPlayingId = itemId;
 
-  // 1. Se estiver na seção SÉRIES, abre a Tela de Detalhes Cinematográfica (igual ao Print 2 - IPTV Expert)
+  // 1. Se estiver na seção SÉRIES, registra em Recentemente Visto e abre a Tela de Detalhes Cinematográfica
   if (appState.currentSection === 'series') {
+    addRecentItem('series', item);
     await openSeriesDetailScreen(item);
     return;
   }
 
-  // 2. Se estiver na seção FILMES (VOD), abre direto no Player de Cinema 100% Tela Cheia!
+  // 2. Se estiver na seção FILMES (VOD), registra em Recentemente Visto e abre direto no Player de Cinema 100% Tela Cheia!
   if (appState.currentSection === 'vod') {
-    const recents = appState.preferences.recentMovies.filter(n => n !== item.name);
-    recents.unshift(item.name);
-    appState.preferences.recentMovies = recents.slice(0, 20);
-    localStorage.setItem('3a_recent_movies', JSON.stringify(appState.preferences.recentMovies));
-    syncSettingsLabels();
+    addRecentItem('vod', item);
     startVodOrLiveInCinema(item, 'vod');
     return;
   }
 
-  // 3. Se estiver em TV AO VIVO / FUTEBOL e clicar novamente no mesmo canal (ou se estiver em celular Retrato), abre em Tela Cheia!
+  // 3. Se estiver em TV AO VIVO / FUTEBOL, registra em Recentemente Visto
+  addRecentItem('live', item);
   appState.currentLiveItem = item;
   if (wasAlreadyPlaying && notify) {
     startVodOrLiveInCinema(item, 'live');
@@ -1115,26 +1521,25 @@ async function playCatalogItem(item, notify = true) {
 
   destroyPlayers();
   startStreamOnVideoElement(video, streamUrl, item);
-
-  if (notify) {
-    showToast(`▶️ Canal: ${title} (Toque em ⛶ Tela Cheia 100% para expandir)`);
-  }
 }
 
 function openCurrentLiveInCinema() {
   if (appState.currentLiveItem) {
     startVodOrLiveInCinema(appState.currentLiveItem, 'live');
-  } else {
-    showToast('⚠️ Selecione um canal ao vivo primeiro.');
   }
 }
 
 function startVodOrLiveInCinema(item, mode = 'vod') {
   stopVideoPlayback();
   cinemaReturnScreen = 'screenCatalog';
+  currentCinemaContext = { mode, item, episode: null };
 
   navigateToScreen('screenCinemaPlayer');
   scheduleCinemaTopbarHide();
+  syncCinemaFavoriteButton();
+
+  const dlBtn = document.getElementById('btnCinemaDownloadMp4');
+  if (dlBtn) dlBtn.classList.toggle('hidden', mode === 'live');
 
   document.getElementById('cinemaNowTitle').textContent = item.name || 'Reproduzindo no 3A Stream';
   document.getElementById('cinemaNowSub').textContent =
@@ -1154,7 +1559,6 @@ function startVodOrLiveInCinema(item, mode = 'vod') {
 
   destroyPlayers();
   startStreamOnVideoElement(cinemaVideo, item.streamUrl, item);
-  showToast(`▶️ Tela Cheia 100%: ${item.name}`);
 }
 
 // ============================================================================
@@ -1596,6 +2000,7 @@ async function openSeriesDetailScreen(seriesItem) {
     watchBtn.onclick = null;
   }
 
+  syncSeriesDetailFavoriteButton();
   renderMediaDetailTabs();
   navigateToScreen('screenMediaDetail');
   const scrollWrap = document.getElementById('mediaDetailScrollContainer');
@@ -1664,13 +2069,16 @@ function renderMediaDetailTabs() {
         </div>
         <div class="ep-card-caption">${rec.name}</div>
       `;
-      card.onclick = () => openSeriesDetailScreen(rec);
+      card.onclick = () => {
+        addRecentItem('series', rec);
+        openSeriesDetailScreen(rec);
+      };
       grid.appendChild(card);
     });
     return;
   }
 
-  // Aba de Temporada (Exibe todos os Episódios em Cards 16:9 como no Print 2)
+  // Aba de Temporada (Exibe todos os Episódios em Cards 16:9 + botão de Download MP4)
   const episodes = (activeSeriesItem.seasons && activeSeriesItem.seasons[activeSeasonKey]) || [];
   if (episodes.length === 0) {
     contentPanel.innerHTML = `<p style="color:#9ca3af;font-size:13px;">Nenhum episódio encontrado nesta temporada.</p>`;
@@ -1698,9 +2106,19 @@ function renderMediaDetailTabs() {
           <div class="ep-play-circle">▶</div>
         </div>
         <div class="ep-corner-badge">▶</div>
+        <span class="card-dl-btn" title="Baixar Episódio em MP4">⬇ MP4</span>
       </div>
       <div class="ep-card-caption">${ep.title}</div>
     `;
+
+    const dlBtnEl = card.querySelector('.card-dl-btn');
+    if (dlBtnEl) {
+      dlBtnEl.onclick = (e) => {
+        e.stopPropagation();
+        const epLabel = `S${String(activeSeasonKey).padStart(2, '0')}E${String(ep.episode_num || idx + 1).padStart(2, '0')}`;
+        triggerMp4Download(ep.streamUrl, `${activeSeriesItem.name}_${epLabel}_${ep.title || ''}`, ep);
+      };
+    }
 
     card.onclick = () => startSeriesEpisodeInCinema(activeSeasonKey, idx);
     grid.appendChild(card);
@@ -1722,12 +2140,14 @@ function startSeriesEpisodeInCinema(seasonKey, epIndex) {
   const ep = seasonEps[epIndex];
   if (!ep) return;
 
+  addRecentItem('series', activeSeriesItem);
   cinemaReturnScreen = 'screenMediaDetail';
   activeSeasonKey = String(seasonKey);
   activeEpisodeIndex = epIndex;
+  currentCinemaContext = { mode: 'series', item: activeSeriesItem, episode: ep };
 
-  // Mostra controles de episódios para séries
-  ['btnPrevEpisode', 'btnNextEpisode', 'btnToggleEpDrawer'].forEach(id => {
+  // Mostra controles de episódios e download MP4 para séries
+  ['btnPrevEpisode', 'btnNextEpisode', 'btnToggleEpDrawer', 'btnCinemaDownloadMp4'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove('hidden');
   });
@@ -1741,6 +2161,7 @@ function startSeriesEpisodeInCinema(seasonKey, epIndex) {
 
   navigateToScreen('screenCinemaPlayer');
   scheduleCinemaTopbarHide();
+  syncCinemaFavoriteButton();
 
   document.getElementById('cinemaNowTitle').textContent = ep.title || `${activeSeriesItem.name} - Episódio ${epIndex + 1}`;
   document.getElementById('cinemaNowSub').textContent = `${activeSeriesItem.name} • Temporada ${seasonKey} • Episódio ${ep.episode_num || epIndex + 1} de ${seasonEps.length}`;
@@ -1767,11 +2188,8 @@ function startSeriesEpisodeInCinema(seasonKey, epIndex) {
 
   // Auto-avança para o próximo episódio ao terminar o vídeo!
   cinemaVideo.onended = () => {
-    showToast('⏭️ Episódio concluído! Iniciando próximo episódio...');
     skipSeriesEpisode(1);
   };
-
-  showToast(`▶️ Reproduzindo: ${ep.title}`);
 }
 
 function skipSeriesEpisode(delta) {
@@ -1977,8 +2395,10 @@ function openSettingAction(actionKey) {
     case 'clear_recent':
       appState.preferences.recentMovies = [];
       localStorage.setItem('3a_recent_movies', '[]');
+      localStorage.setItem('3a_recent_vod', '[]');
+      localStorage.setItem('3a_recent_series', '[]');
+      localStorage.setItem('3a_recent_live', '[]');
       syncSettingsLabels();
-      showToast('🗑️ Histórico de filmes vistos recentemente limpo!');
       break;
 
     case 'stream_format':
@@ -2362,12 +2782,8 @@ function closeAppModal() {
 }
 
 let toastTimer = null;
-function showToast(msg) {
+function showToast(_msg) {
+  // Tooltips no canto inferior direito removidas conforme solicitado
   const toast = document.getElementById('appToast');
-  toast.textContent = msg;
-  toast.classList.remove('hidden');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    toast.classList.add('hidden');
-  }, 3200);
+  if (toast) toast.classList.add('hidden');
 }

@@ -997,6 +997,14 @@ app.get('/api/proxy/stream', async (req, res) => {
     const contentRange = upstream.headers.get('content-range');
     if (contentRange) res.setHeader('Content-Range', contentRange);
 
+    if (String(req.query.download || '') === '1') {
+      const rawName = String(req.query.filename || 'Video_3A_Stream.mp4')
+        .replace(/["\r\n\\/:*?<>|]+/g, '_')
+        .trim();
+      const finalFilename = rawName.toLowerCase().endsWith('.mp4') ? rawName : `${rawName}.mp4`;
+      res.setHeader('Content-Disposition', `attachment; filename="${finalFilename}"`);
+    }
+
     if (upstream.body) {
       const nodeStream = Readable.fromWeb(upstream.body);
       activeUpstreamNodeStream = nodeStream;

@@ -243,10 +243,8 @@
 
           </div>
 
-          <!-- RODAPÉ: DATA DE VENCIMENTO DA ASSINATURA (IDÊNTICO AO PRINT 1) -->
-          <div class="xcloud-bottom-date" id="homeExpirationDate">
-            15/06/2026
-          </div>
+          <!-- RODAPÉ SEM DATA DE VENCIMENTO CONFORME SOLICITADO -->
+          <div class="xcloud-bottom-date hidden" id="homeExpirationDate" style="display:none !important;"></div>
 
         </div>
       </section>
@@ -461,17 +459,21 @@
                 <span class="media-pill media-pill-genre" id="detailGenrePill">Drama, Sci-Fi</span>
               </div>
               <div class="media-top-right">
-                <button type="button" class="media-icon-btn focusable" onclick="showToast('📡 Pronto para transmitir para Smart TV')" title="Transmitir">📺</button>
-                <button type="button" class="media-icon-btn focusable" onclick="showToast('⭐ Adicionado aos Favoritos!')" title="Favoritar">☆</button>
+                <button type="button" class="media-icon-btn focusable" id="btnDetailFavorite" onclick="toggleActiveSeriesFavorite()" title="Adicionar/Remover dos Favoritos">☆</button>
               </div>
             </div>
 
             <!-- CENTRO DO HERO: TÍTULO + BOTÃO ASSISTIR + SINOPSE -->
             <div class="media-hero-center">
               <h1 class="media-hero-title" id="detailTitle">Lanternas</h1>
-              <button type="button" class="media-watch-btn focusable" id="btnDetailPrimaryWatch">
-                ▶ Assistir S01E01 - Episodio 1
-              </button>
+              <div class="media-hero-actions">
+                <button type="button" class="media-watch-btn focusable" id="btnDetailPrimaryWatch">
+                  ▶ Assistir S01E01 - Episodio 1
+                </button>
+                <button type="button" class="media-download-hero-btn focusable" id="btnDetailDownloadEpisode" onclick="downloadActiveSeriesEpisode()">
+                  ⬇️ Baixar MP4
+                </button>
+              </div>
               <p class="media-hero-plot" id="detailPlot">
                 Dois policiais intergalácticos, o recruta novato John Stewart e o lendário Lanterna Verde Hal Jordan, se veem envolvidos em um mistério sombrio que se passa na Terra enquanto investigam um assassinato no coração dos Estados Unidos.
               </p>
@@ -490,7 +492,7 @@
       </section>
 
       <!-- =================================================================
-           6. PLAYER DE CINEMA DEDICADO (TELA CHEIA 100% + BOTÃO VOLTAR SUPERIOR ESQUERDO AO TOCAR NA TELA)
+           6. PLAYER DE CINEMA DEDICADO (TELA CHEIA 100% + CONTROLES CENTRAIS + DOWNLOAD MP4)
            ================================================================= -->
       <section id="screenCinemaPlayer" class="app-screen">
         <div class="cinema-player-wrap" id="cinemaPlayerWrap" onclick="handleCinemaStageTap(event)">
@@ -508,6 +510,12 @@
               </div>
             </div>
             <div class="cinema-top-actions">
+              <button type="button" class="cinema-ctrl-btn focusable" id="btnCinemaFavorite" onclick="toggleCurrentCinemaFavorite(event)" title="Favoritar / Desfavoritar">
+                ☆ Favorito
+              </button>
+              <button type="button" class="cinema-ctrl-btn cinema-ctrl-download focusable" id="btnCinemaDownloadMp4" onclick="downloadCurrentCinemaVideo(event)" title="Baixar vídeo em MP4">
+                ⬇️ Baixar MP4
+              </button>
               <button type="button" class="cinema-ctrl-btn cinema-ctrl-audio focusable" id="btnCinemaAudioBoost" onclick="cycleAudioBoostMode()" title="Corrige áudio baixo 5.1 Surround realçando vozes e normalizando volume">
                 🔊 Voz 5.1 (180%)
               </button>
@@ -526,9 +534,52 @@
             </div>
           </div>
 
-          <!-- ÁREA DO VÍDEO 100% TELA CHEIA + GAVETA LATERAL DE EPISÓDIOS -->
+          <!-- ÁREA DO VÍDEO 100% TELA CHEIA + CONTROLES CENTRAIS + GAVETA LATERAL DE EPISÓDIOS -->
           <div class="cinema-stage">
             <video id="cinemaVideoElement" class="video-fit-fill" controls controlsList="nofullscreen" playsinline crossorigin="anonymous"></video>
+
+            <!-- CONTROLES CENTRAIS DE REPRODUÇÃO (CONFORME PRINT 3: -10s, ANTERIOR, PLAY/PAUSE, PRÓXIMO, +10s) -->
+            <div class="cinema-center-controls" id="cinemaCenterControls">
+              <button type="button" class="cinema-center-btn focusable" id="btnCenterRewind10" onclick="seekCinemaVideo(-10, event)" title="Voltar 10 segundos">
+                <svg viewBox="0 0 36 36" width="38" height="38" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M18 6a12 12 0 1 0 11.3 8" />
+                  <polyline points="12 2 18 6 14 11" />
+                  <text x="18" y="22.5" text-anchor="middle" fill="currentColor" stroke="none" font-size="10.5" font-weight="800" font-family="Inter, sans-serif">10</text>
+                </svg>
+              </button>
+
+              <button type="button" class="cinema-center-btn focusable" id="btnCenterSkipPrev" onclick="handleCinemaSkip(-1, event)" title="Anterior">
+                <svg viewBox="0 0 24 24" width="34" height="34" fill="currentColor">
+                  <rect x="4" y="5" width="2.6" height="14" rx="1" />
+                  <path d="M19.2 5.4a1 1 0 0 1 1.6.8v11.6a1 1 0 0 1-1.6.8l-9.4-5.8a1 1 0 0 1 0-1.6l9.4-5.8z" />
+                </svg>
+              </button>
+
+              <button type="button" class="cinema-center-play-btn focusable" id="btnCenterPlayPause" onclick="toggleCinemaPlayPause(event)" title="Play / Pause">
+                <svg id="iconCenterPlay" class="hidden" viewBox="0 0 24 24" width="34" height="34" fill="currentColor">
+                  <path d="M8 5.14v13.72a1 1 0 0 0 1.55.83l11-6.86a1 1 0 0 0 0-1.66l-11-6.86A1 1 0 0 0 8 5.14z" />
+                </svg>
+                <svg id="iconCenterPause" viewBox="0 0 24 24" width="34" height="34" fill="currentColor">
+                  <rect x="6.5" y="5" width="3.8" height="14" rx="1.2" />
+                  <rect x="13.7" y="5" width="3.8" height="14" rx="1.2" />
+                </svg>
+              </button>
+
+              <button type="button" class="cinema-center-btn focusable" id="btnCenterSkipNext" onclick="handleCinemaSkip(1, event)" title="Próximo / Pular">
+                <svg viewBox="0 0 24 24" width="34" height="34" fill="currentColor">
+                  <path d="M4.8 5.4a1 1 0 0 0-1.6.8v11.6a1 1 0 0 0 1.6.8l9.4-5.8a1 1 0 0 0 0-1.6L4.8 5.4z" />
+                  <rect x="17.4" y="5" width="2.6" height="14" rx="1" />
+                </svg>
+              </button>
+
+              <button type="button" class="cinema-center-btn focusable" id="btnCenterForward10" onclick="seekCinemaVideo(10, event)" title="Avançar 10 segundos">
+                <svg viewBox="0 0 36 36" width="38" height="38" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M18 6a12 12 0 1 1-11.3 8" />
+                  <polyline points="24 2 18 6 22 11" />
+                  <text x="18" y="22.5" text-anchor="middle" fill="currentColor" stroke="none" font-size="10.5" font-weight="800" font-family="Inter, sans-serif">10</text>
+                </svg>
+              </button>
+            </div>
 
             <!-- GAVETA LATERAL RÁPIDA DE EPISÓDIOS DENTRO DO PLAYER -->
             <aside id="cinemaEpisodeDrawer" class="cinema-ep-drawer hidden">
@@ -543,8 +594,8 @@
         </div>
       </section>
 
-      <!-- TOAST DE FEEDBACK -->
-      <div id="appToast" class="app-toast hidden"></div>
+      <!-- TOAST DESATIVADO CONFORME SOLICITADO -->
+      <div id="appToast" class="app-toast hidden" style="display:none !important;"></div>
 
     </div>
 

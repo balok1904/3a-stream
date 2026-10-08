@@ -1,14 +1,21 @@
 package com.tresastream.iptv;
 
+import android.app.DownloadManager;
+import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.webkit.DownloadListener;
+import android.webkit.URLUtil;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
@@ -66,6 +73,51 @@ public class MainActivity extends BridgeActivity {
                 settings.setMediaPlaybackRequiresUserGesture(false);
                 settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                 settings.setDomStorageEnabled(true);
+
+                webView.setDownloadListener(new DownloadListener() {
+                    @Override
+                    public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimetype, long contentLength) {
+                        try {
+                            String downloadTargetUrl = url;
+                            String fileName = "Video_3A_Stream.mp4";
+                            if (url != null && url.contains("filename=")) {
+                                int fIdx = url.indexOf("filename=") + 9;
+                                String rawF = url.substring(fIdx).split("&")[0];
+                                fileName = URLDecoder.decode(rawF, "UTF-8");
+                            } else if (contentDisposition != null && !contentDisposition.isEmpty()) {
+                                fileName = URLUtil.guessFileName(url, contentDisposition, "video/mp4");
+                            }
+                            if (!fileName.toLowerCase().endsWith(".mp4")) {
+                                fileName = fileName + ".mp4";
+                            }
+                            // Se for URL do proxy local 127.0.0.1:34567, extrai a URL remota para o DownloadManager do sistema Android
+                            if (url != null && url.contains("127.0.0.1:34567/proxy") && url.contains("url=")) {
+                                int uIdx = url.indexOf("url=") + 4;
+                                String rawU = url.substring(uIdx).split("&")[0];
+                                String decodedU = URLDecoder.decode(rawU, "UTF-8");
+                                downloadTargetUrl = vodRedirectCache.getOrDefault(decodedU, decodedU);
+                            }
+
+                            DownloadManager.Request req = new DownloadManager.Request(Uri.parse(downloadTargetUrl));
+                            req.setMimeType("video/mp4");
+                            req.addRequestHeader("User-Agent", "IPTVSmartersPlayer");
+                            req.setTitle(fileName);
+                            req.setDescription("Baixando vídeo MP4 — 3A Stream");
+                            req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                            req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+
+                            DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                            if (dm != null) {
+                                dm.enqueue(req);
+                            }
+                        } catch (Exception e) {
+                            try {
+                                Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                                startActivity(i);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                });
             }
         } catch (Exception ignored) {}
     }
@@ -259,6 +311,17 @@ public class MainActivity extends BridgeActivity {
             }
             if (contentRange != null) {
                 respHeaders.append("Content-Range: ").append(contentRange).append("\r\n");
+            }
+            if (path.contains("download=1")) {
+                String dlName = "Video_3A_Stream.mp4";
+                if (path.contains("filename=")) {
+                    int fIdx = path.indexOf("filename=") + 9;
+                    String rawF = path.substring(fIdx).split("&")[0];
+                    try { dlName = URLDecoder.decode(rawF, "UTF-8"); } catch (Exception ignored) {}
+                }
+                dlName = dlName.replace("\"", "").replace("\r", "").replace("\n", "");
+                if (!dlName.toLowerCase().endsWith(".mp4")) dlName = dlName + ".mp4";
+                respHeaders.append("Content-Disposition: attachment; filename=\"").append(dlName).append("\"\r\n");
             }
             respHeaders.append("Connection: close\r\n\r\n");
 

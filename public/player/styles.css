@@ -833,18 +833,9 @@ body.mode-mobile .device-viewport {
   font-weight: 700;
 }
 
-/* Data de Vencimento no Rodapé */
+/* Data de Vencimento no Rodapé (Removida conforme solicitado) */
 .xcloud-bottom-date {
-  font-size: clamp(12px, 2.1vh, 14.5px);
-  font-weight: 700;
-  color: #38bdf8;
-  background: rgba(18, 22, 34, 0.85);
-  border: 1px solid rgba(56, 189, 248, 0.28);
-  padding: 4px 18px;
-  border-radius: 999px;
-  letter-spacing: 0.6px;
-  box-shadow: 0 4px 16px rgba(6, 182, 212, 0.15);
-  flex-shrink: 0;
+  display: none !important;
 }
 
 /* =========================================================
@@ -1524,18 +1515,102 @@ dialog.app-dialog::backdrop {
 }
 
 .app-toast {
-  position: absolute;
-  bottom: 18px;
-  right: 18px;
-  background: linear-gradient(135deg, #7c3aed 0%, #0284c7 52%, #06b6d4 100%);
-  border: 1px solid rgba(103, 232, 249, 0.35);
+  display: none !important;
+}
+
+/* Categorias Fixadas no Topo (Favoritos e Recentemente Visto) */
+.cat-btn.cat-btn-pinned {
+  background: rgba(30, 41, 59, 0.72);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  color: #f8fafc;
+}
+
+.cat-btn.cat-btn-pinned.active,
+.cat-btn.cat-btn-pinned:hover {
+  background: linear-gradient(135deg, #7c3aed 0%, #0ea5e9 60%, #06b6d4 100%);
+  border-color: #67e8f9;
   color: #ffffff;
-  padding: 9px 16px;
-  border-radius: 10px;
-  font-size: 12.5px;
-  font-weight: 700;
-  box-shadow: 0 12px 32px rgba(6, 182, 212, 0.4);
-  z-index: 60;
+}
+
+/* Botões rápidos de Favoritar e Download MP4 nos Cards */
+.card-fav-btn {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 6;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(9, 11, 16, 0.85);
+  border: 1px solid rgba(250, 204, 21, 0.45);
+  color: #facc15;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.card-fav-btn:hover {
+  transform: scale(1.12);
+  background: rgba(20, 24, 36, 0.96);
+}
+
+.card-fav-btn.is-favorited {
+  background: rgba(250, 204, 21, 0.22);
+  border-color: #facc15;
+  color: #fde047;
+  box-shadow: 0 0 10px rgba(250, 204, 21, 0.35);
+}
+
+.channel-fav-btn {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(250, 204, 21, 0.35);
+  color: #facc15;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.channel-fav-btn:hover {
+  transform: scale(1.1);
+  background: rgba(30, 41, 59, 0.95);
+}
+
+.card-dl-btn {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  z-index: 6;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: rgba(6, 182, 212, 0.92);
+  border: 1px solid rgba(165, 243, 252, 0.7);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.6);
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.card-dl-btn:hover {
+  transform: scale(1.08);
+  filter: brightness(1.15);
 }
 
 /* =========================================================
@@ -1659,6 +1734,14 @@ dialog.app-dialog::backdrop {
   text-shadow: 0 4px 18px rgba(0, 0, 0, 0.9);
 }
 
+.media-hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .media-watch-btn {
   background: linear-gradient(135deg, #7c3aed 0%, #0284c7 52%, #06b6d4 100%);
   color: #ffffff;
@@ -1680,6 +1763,28 @@ dialog.app-dialog::backdrop {
   transform: scale(1.04);
   filter: brightness(1.12);
   box-shadow: 0 8px 28px rgba(56, 189, 248, 0.55);
+}
+
+.media-download-hero-btn {
+  background: rgba(16, 185, 129, 0.9);
+  color: #ffffff;
+  border: 1px solid rgba(110, 231, 183, 0.55);
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35);
+  transition: transform 0.15s, filter 0.15s;
+}
+
+.media-download-hero-btn:hover {
+  transform: scale(1.04);
+  filter: brightness(1.12);
 }
 
 .media-hero-plot {
@@ -1828,7 +1933,7 @@ dialog.app-dialog::backdrop {
 }
 
 /* =========================================================
-   6. PLAYER DE CINEMA DEDICADO (100% TELA CHEIA + BOTÃO VOLTAR SUPERIOR ESQUERDO AO TOCAR)
+   6. PLAYER DE CINEMA DEDICADO (100% TELA CHEIA + CONTROLES CENTRAIS + DOWNLOAD MP4)
    ========================================================= */
 .cinema-player-wrap {
   position: relative;
@@ -1954,6 +2059,13 @@ dialog.app-dialog::backdrop {
   background: #26314a;
 }
 
+.cinema-ctrl-download {
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  border-color: #6ee7b7;
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+}
+
 .cinema-ctrl-audio {
   background: linear-gradient(135deg, #7c3aed 0%, #6366f1 100%);
   border-color: #a78bfa;
@@ -1982,6 +2094,76 @@ dialog.app-dialog::backdrop {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+/* CONTROLES CENTRAIS DO PLAYER DE CINEMA (CONFORME PRINT 3: -10s, ANTERIOR, PLAY/PAUSE, PRÓXIMO, +10s) */
+.cinema-center-controls {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 38;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(22px, 5vw, 54px);
+  padding: 14px 26px;
+  border-radius: 999px;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0.15) 70%, transparent 100%);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  pointer-events: auto;
+}
+
+.cinema-center-controls.controls-hidden {
+  opacity: 0;
+  transform: translate(-50%, -46%) scale(0.95);
+  pointer-events: none;
+}
+
+.cinema-center-btn {
+  background: rgba(15, 18, 28, 0.55);
+  backdrop-filter: blur(6px);
+  border: 1.5px solid rgba(255, 255, 255, 0.28);
+  color: #ffffff;
+  width: clamp(46px, 7.5vw, 56px);
+  height: clamp(46px, 7.5vw, 56px);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.cinema-center-btn:hover,
+.cinema-center-btn:active {
+  transform: scale(1.12);
+  background: rgba(30, 41, 59, 0.85);
+  border-color: #38bdf8;
+}
+
+.cinema-center-play-btn {
+  background: rgba(18, 22, 34, 0.72);
+  backdrop-filter: blur(8px);
+  border: 2.5px solid #ffffff;
+  color: #ffffff;
+  width: clamp(62px, 10vw, 76px);
+  height: clamp(62px, 10vw, 76px);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.75), 0 0 18px rgba(56, 189, 248, 0.35);
+  transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+}
+
+.cinema-center-play-btn:hover,
+.cinema-center-play-btn:active {
+  transform: scale(1.1);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.88) 0%, rgba(6, 182, 212, 0.88) 100%);
+  border-color: #67e8f9;
 }
 
 /* Oculta o botão de fullscreen isolado nativo do <video> para que o botão Voltar superior esquerdo nunca suma */
