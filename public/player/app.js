@@ -2735,8 +2735,70 @@ function closeCinemaPlayer() {
   }
 }
 
+function toggleWebBrowserFullscreen(event) {
+  if (event) event.stopPropagation();
+  const doc = document;
+  const isFull = Boolean(
+    doc.fullscreenElement ||
+    doc.webkitFullscreenElement ||
+    doc.mozFullScreenElement ||
+    doc.msFullscreenElement
+  );
+
+  if (!isFull) {
+    const el = doc.documentElement;
+    if (el.requestFullscreen) {
+      el.requestFullscreen().catch(() => {});
+    } else if (el.webkitRequestFullscreen) {
+      el.webkitRequestFullscreen();
+    } else if (el.msRequestFullscreen) {
+      el.msRequestFullscreen();
+    }
+  } else {
+    if (doc.exitFullscreen) {
+      doc.exitFullscreen().catch(() => {});
+    } else if (doc.webkitExitFullscreen) {
+      doc.webkitExitFullscreen();
+    } else if (doc.msExitFullscreen) {
+      doc.msExitFullscreen();
+    }
+  }
+}
+
+function syncFullscreenIcons() {
+  const isFull = Boolean(
+    document.fullscreenElement ||
+    document.webkitFullscreenElement ||
+    document.mozFullScreenElement ||
+    document.msFullscreenElement
+  );
+
+  const topBtn = document.getElementById('btnCinemaFullscreenTop');
+  if (topBtn) {
+    topBtn.innerHTML = isFull ? '🗗 Sair da Tela Cheia' : '⛶ Tela Cheia';
+    topBtn.classList.toggle('active', isFull);
+    topBtn.title = isFull ? 'Sair da Tela Cheia (F / Esc)' : 'Tela Cheia do Navegador (F)';
+  }
+
+  const iconEnter = document.getElementById('iconCinemaEnterFullscreen');
+  const iconExit = document.getElementById('iconCinemaExitFullscreen');
+  if (iconEnter && iconExit) {
+    iconEnter.classList.toggle('hidden', isFull);
+    iconExit.classList.toggle('hidden', !isFull);
+  }
+
+  const bottomBtn = document.getElementById('btnCinemaFullscreenBottom');
+  if (bottomBtn) {
+    bottomBtn.title = isFull ? 'Sair da Tela Cheia (F / Esc)' : 'Tela Cheia (F)';
+  }
+}
+
+['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'].forEach(evt => {
+  document.addEventListener(evt, syncFullscreenIcons);
+});
+
 function toggleCinemaFullscreen() {
-  cycleVideoAspectRatio();
+  toggleWebBrowserFullscreen();
 }
 
 let mpegtsPlayer = null;
@@ -3243,6 +3305,11 @@ function initKeyboardDpadNavigation() {
     } else if (e.key === 'Backspace' || e.key === 'Escape') {
       e.preventDefault();
       triggerDpadBack();
+    } else if (e.key === 'f' || e.key === 'F') {
+      e.preventDefault();
+      if (typeof toggleWebBrowserFullscreen === 'function') {
+        toggleWebBrowserFullscreen();
+      }
     }
   });
 }

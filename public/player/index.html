@@ -16,29 +16,12 @@
   <!-- Google Cast CAF Sender SDK para Chromecast e Google TV -->
   <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1" async></script>
 </head>
-<body class="mode-tvbox">
+<body class="mode-fullscreen">
 
-  <!-- BARRA DO AMBIENTE DE TESTES ANDROID (OCULTA AUTOMATICAMENTE DENTRO DO APK NATIVO) -->
-  <header id="testbenchBar" class="testbench-bar">
-    <div class="tb-left">
-      <span class="tb-badge">🤖 3A STREAM STUDIO</span>
-      <span class="tb-title">Web & Android APK v2.0</span>
-    </div>
-    <div class="tb-center">
-      <button type="button" class="tb-btn active" id="btnModeTv" onclick="setSimulatorFrame('tvbox')">📺 Widescreen TV</button>
-      <button type="button" class="tb-btn" id="btnModeFull" onclick="setSimulatorFrame('fullscreen')">🖥️ Tela Cheia</button>
-      <button type="button" class="tb-btn" id="btnModeMobile" onclick="setSimulatorFrame('mobile')">📱 Mobile Android</button>
-    </div>
-    <div class="tb-right">
-      <a href="/3A-Stream-Mobile.apk" download="3A-Stream-Mobile.apk" class="tb-apk-link">📲 Baixar APK Mobile</a>
-      <a href="/admin" class="tb-admin-link">🔒 Painel Admin</a>
-    </div>
-  </header>
-
-  <!-- WORKSPACE DO EMULADOR ANDROID -->
+  <!-- WORKSPACE DO PLAYER (TELA CHEIA 100% MODERNA) -->
   <main class="emulator-workspace">
 
-    <!-- TELA DO DISPOSITIVO ANDROID / TV BOX -->
+    <!-- VIEWPORT DO PLAYER -->
     <div id="deviceViewport" class="device-viewport">
 
       <!-- =================================================================
@@ -517,6 +500,9 @@
               <button type="button" class="cinema-ctrl-btn cinema-ctrl-download focusable" id="btnCinemaDownloadMp4" onclick="downloadCurrentCinemaVideo(event)" title="Baixar vídeo em MP4">
                 ⬇️ Baixar MP4
               </button>
+              <button type="button" class="cinema-ctrl-btn focusable" id="btnCinemaFullscreenTop" onclick="toggleWebBrowserFullscreen(event)" title="Tela Cheia do Navegador (F)">
+                ⛶ Tela Cheia
+              </button>
               <button type="button" class="cinema-ctrl-btn focusable" id="btnCinemaAspectRatio" onclick="cycleVideoAspectRatio()" title="Alternar formato de preenchimento da tela">
                 📐 Tela: Preencher 100%
               </button>
@@ -534,7 +520,7 @@
 
           <!-- ÁREA DO VÍDEO 100% TELA CHEIA + CONTROLES CENTRAIS + BARRA INFERIOR DE PROGRESSO + GAVETA LATERAL DE EPISÓDIOS -->
           <div class="cinema-stage">
-            <video id="cinemaVideoElement" class="video-fit-fill" playsinline></video>
+            <video id="cinemaVideoElement" class="video-fit-fill" playsinline ondblclick="toggleWebBrowserFullscreen(event)"></video>
 
             <!-- CONTROLES CENTRAIS DE REPRODUÇÃO (CONFORME PRINT 3: -10s, ANTERIOR, PLAY/PAUSE, PRÓXIMO, +10s) -->
             <div class="cinema-center-controls" id="cinemaCenterControls">
@@ -589,6 +575,14 @@
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>
                   <line x1="2" y1="20" x2="2.01" y2="20"/>
+                </svg>
+              </button>
+              <button type="button" class="cinema-mute-btn cinema-fullscreen-btn focusable" id="btnCinemaFullscreenBottom" onclick="toggleWebBrowserFullscreen(event)" title="Tela Cheia (F)">
+                <svg id="iconCinemaEnterFullscreen" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                </svg>
+                <svg id="iconCinemaExitFullscreen" class="hidden" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
                 </svg>
               </button>
             </div>
