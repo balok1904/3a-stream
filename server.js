@@ -1653,6 +1653,9 @@ app.post('/api/admin/login', (req, res) => {
 });
 
 app.get('/api/admin/overview', requireAdminAuth, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   const db = loadDb();
   const today = new Date();
   today.setHours(0, 0, 0, 0);

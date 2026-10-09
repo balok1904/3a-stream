@@ -18,25 +18,25 @@
   ],
   "clients": [
     {
-      "id": "cli_1791400458395",
-      "name": "Teste",
+      "id": "cli_1791511153338",
+      "name": "Amanda Gonzaga",
       "phone": "",
-      "username": "teste",
-      "password": "123",
+      "username": "amandagonzaga",
+      "password": "athena19",
       "macAddress": "61:F3:CF:92:93:B1",
       "planName": "Plano 3A Completo 4K",
-      "monthlyPrice": 35,
-      "expiresAt": "2026-11-06",
+      "monthlyPrice": 0.01,
+      "expiresAt": "2099-11-08",
       "status": "active",
       "parentalPin": "0000",
-      "iptvSourceType": "xtream",
-      "xtreamUrl": "http://sevdns.sbs",
-      "xtreamUser": "603279198",
-      "xtreamPass": "448213191",
-      "m3uUrl": "",
+      "iptvSourceType": "m3u",
+      "xtreamUrl": "",
+      "xtreamUser": "",
+      "xtreamPass": "",
+      "m3uUrl": "http://sev3u.sbs:80/get.php?username=371047218&password=357753734&type=m3u_plus&output=mpegts",
       "maxConnections": 1,
       "notes": "",
-      "lastLoginAt": "2026-10-07T20:03:38.815Z"
+      "lastLoginAt": null
     },
     {
       "id": "cli_1",
@@ -44,9 +44,9 @@
       "phone": "(11) 99999-0001",
       "username": "asmj10",
       "password": "sha256:abd2c430490bf153d05c27fbb5b9703be7153d3aaf0c61abf013d34c808b85c9",
-      "macAddress": "61:F3:CF:92:93:B1",
+      "macAddress": "3A:28:7F:14:F7:9A",
       "planName": "Plano 3A Completo 4K",
-      "monthlyPrice": 35,
+      "monthlyPrice": 0.01,
       "expiresAt": "2027-06-15",
       "status": "active",
       "parentalPin": "1904",
@@ -57,36 +57,8 @@
       "m3uUrl": "http://sev3u.sbs:80/get.php?username=371047218&password=357753734&type=m3u_plus&output=mpegts",
       "maxConnections": 2,
       "notes": "Conta principal para homologação do aplicativo 3A Stream.",
-      "lastLoginAt": "2026-10-08T14:00:56.251Z"
+      "lastLoginAt": "2026-10-09T02:14:19.274Z"
     }
   ],
-  "payments": [
-    {
-      "id": "pay_1791353512216",
-      "clientId": "cli_2",
-      "clientName": "João Silva (Sala TV Box)",
-      "amount": 35,
-      "date": "2026-10-07",
-      "method": "PIX",
-      "status": "paid"
-    },
-    {
-      "id": "pay_1",
-      "clientId": "cli_1",
-      "clientName": "Cliente Teste Admin (VIP)",
-      "amount": 35,
-      "date": "2026-10-01",
-      "method": "PIX",
-      "status": "paid"
-    },
-    {
-      "id": "pay_2",
-      "clientId": "cli_2",
-      "clientName": "João Silva (Sala TV Box)",
-      "amount": 35,
-      "date": "2026-10-05",
-      "method": "PIX",
-      "status": "paid"
-    }
-  ]
+  "payments": []
 }

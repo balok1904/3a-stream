@@ -79,10 +79,12 @@ function logoutAdminPanel() {
 async function adminFetch(url, options = {}) {
   const token = sessionStorage.getItem('3a_admin_token') || '';
   const headers = {
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
     ...(options.headers || {}),
     Authorization: `Bearer ${token}`
   };
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(url, { ...options, headers, cache: 'no-store' });
   if (res.status === 401) {
     sessionStorage.removeItem('3a_admin_token');
     showAdminLoginGate('Sessão expirada ou acesso restrito. Faça login novamente.');
