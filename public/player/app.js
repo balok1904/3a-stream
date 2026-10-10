@@ -678,6 +678,13 @@ async function reloadPlaylistCatalog(fromSettings = false) {
 let lastBackExitToastTime = 0;
 
 function navigateToScreen(screenId, skipHistoryPush = false) {
+  // Ao voltar para a página principal (Home) ou Login, fecha e encerra o PiP imediatamente!
+  if (screenId === 'screenHome' || screenId === 'screenLogin') {
+    if (isPipModeActive) {
+      closeCinemaPlayer(true);
+    }
+  }
+
   document.querySelectorAll('.app-screen').forEach(s => s.classList.remove('active'));
   const target = document.getElementById(screenId);
   if (target) {
@@ -1734,6 +1741,9 @@ function openCatalogSection(section) {
 
 function closeCatalogSection() {
   stopVideoPlayback();
+  if (isPipModeActive) {
+    closeCinemaPlayer(true);
+  }
   navigateToScreen('screenHome');
 }
 
@@ -2656,6 +2666,9 @@ function renderMediaDetailTabs() {
 }
 
 function backFromMediaDetail() {
+  if (isPipModeActive) {
+    closeCinemaPlayer(true);
+  }
   navigateToScreen('screenCatalog');
 }
 
@@ -2819,10 +2832,10 @@ function setupPipDraggable(pipEl) {
     pipDragState.initialLeft = rect.left;
     pipDragState.initialTop = rect.top;
 
-    pipEl.style.bottom = 'auto';
-    pipEl.style.right = 'auto';
-    pipEl.style.left = `${rect.left}px`;
-    pipEl.style.top = `${rect.top}px`;
+    pipEl.style.setProperty('bottom', 'auto', 'important');
+    pipEl.style.setProperty('right', 'auto', 'important');
+    pipEl.style.setProperty('left', `${rect.left}px`, 'important');
+    pipEl.style.setProperty('top', `${rect.top}px`, 'important');
 
     document.addEventListener('pointermove', onPointerMove, { passive: false });
     document.addEventListener('pointerup', onPointerUp);
@@ -2843,8 +2856,8 @@ function setupPipDraggable(pipEl) {
     const newLeft = Math.max(8, Math.min(window.innerWidth - pipEl.offsetWidth - 8, pipDragState.initialLeft + deltaX));
     const newTop = Math.max(8, Math.min(window.innerHeight - pipEl.offsetHeight - 8, pipDragState.initialTop + deltaY));
 
-    pipEl.style.left = `${newLeft}px`;
-    pipEl.style.top = `${newTop}px`;
+    pipEl.style.setProperty('left', `${newLeft}px`, 'important');
+    pipEl.style.setProperty('top', `${newTop}px`, 'important');
   };
 
   const onPointerUp = () => {
@@ -2941,10 +2954,12 @@ function enterFloatingPipMode(event) {
   cinemaScreen.classList.add('has-pip-active');
   cinemaWrap.classList.add('pip-mode');
 
-  if (!cinemaWrap.style.left && !cinemaWrap.style.top) {
-    cinemaWrap.style.bottom = '24px';
-    cinemaWrap.style.right = '24px';
-  }
+  cinemaWrap.style.removeProperty('left');
+  cinemaWrap.style.removeProperty('top');
+  cinemaWrap.style.removeProperty('bottom');
+  cinemaWrap.style.removeProperty('right');
+  cinemaWrap.style.removeProperty('width');
+  cinemaWrap.style.removeProperty('height');
 
   setupPipDraggable(cinemaWrap);
 }
@@ -2957,12 +2972,12 @@ function clearFloatingPipMode() {
     if (s) s.classList.remove('has-pip-active');
     if (w) {
       w.classList.remove('pip-mode');
-      w.style.left = '';
-      w.style.top = '';
-      w.style.right = '';
-      w.style.bottom = '';
-      w.style.width = '';
-      w.style.height = '';
+      w.style.removeProperty('left');
+      w.style.removeProperty('top');
+      w.style.removeProperty('right');
+      w.style.removeProperty('bottom');
+      w.style.removeProperty('width');
+      w.style.removeProperty('height');
     }
   }
 }

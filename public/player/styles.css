@@ -2348,30 +2348,57 @@ video::-webkit-media-controls-start-playback-button {
    ========================================================= */
 #screenCinemaPlayer.has-pip-active {
   display: block !important;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
   pointer-events: none !important;
   background: transparent !important;
   z-index: 999990 !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
 }
 
 .cinema-player-wrap.pip-mode {
   position: fixed !important;
-  bottom: 24px;
-  right: 24px;
-  width: clamp(260px, 32vw, 420px) !important;
-  height: clamp(146px, 18vw, 236px) !important;
+  bottom: 16px;
+  right: 16px;
+  width: clamp(210px, 24vw, 300px) !important;
+  aspect-ratio: 16 / 9 !important;
+  height: auto !important;
   z-index: 999999 !important;
-  border-radius: 12px !important;
-  border: 2px solid rgba(56, 189, 248, 0.6) !important;
-  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.95), 0 0 20px rgba(56, 189, 248, 0.35) !important;
+  border-radius: 10px !important;
+  border: 2px solid rgba(56, 189, 248, 0.75) !important;
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.95), 0 0 16px rgba(56, 189, 248, 0.35) !important;
   overflow: hidden !important;
   pointer-events: auto !important;
   touch-action: none;
-  resize: both;
-  min-width: 200px;
-  min-height: 112px;
-  max-width: 90vw;
-  max-height: 85vh;
   cursor: grab;
+  background: #000000 !important;
+  box-sizing: border-box !important;
+  max-width: calc(100vw - 32px) !important;
+  max-height: calc(100vh - 32px) !important;
+}
+
+.cinema-player-wrap.pip-mode .cinema-stage {
+  flex: 1 !important;
+  width: 100% !important;
+  height: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+  background: #000000 !important;
+}
+
+.cinema-player-wrap.pip-mode #cinemaVideoElement {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
   background: #000000 !important;
 }
 
