@@ -445,7 +445,7 @@
                   <span>Chromecast</span>
                 </button>
                 <button type="button" class="media-download-hero-btn focusable" id="btnDetailDownloadEpisode" onclick="downloadActiveSeriesEpisode()">
-                  ⬇️ Baixar MP4
+                  ⬇️ Download
                 </button>
               </div>
               <p class="media-hero-plot" id="detailPlot">
@@ -470,6 +470,15 @@
            ================================================================= -->
       <section id="screenCinemaPlayer" class="app-screen">
         <div class="cinema-player-wrap" id="cinemaPlayerWrap" onclick="handleCinemaStageTap(event)">
+
+          <!-- BARRA MINI DE CONTROLE DO MODO PICTURE-IN-PICTURE (PIP FLUTUANTE) -->
+          <div class="cinema-pip-top-controls" id="cinemaPipTopControls">
+            <span class="cinema-pip-badge">🗖 PiP Flutuante</span>
+            <div class="cinema-pip-actions">
+              <button type="button" class="cinema-pip-mini-btn" onclick="restoreFromPipToCinema(event)" title="Maximizar para Tela Cheia">⛶</button>
+              <button type="button" class="cinema-pip-mini-btn cinema-pip-close-btn" onclick="closeCinemaPlayer(true, event)" title="Fechar Vídeo">✕</button>
+            </div>
+          </div>
 
           <!-- BARRA SUPERIOR FLUTUANTE COM BOTÃO DE VOLTAR NO CANTO SUPERIOR ESQUERDO (VISÍVEL APENAS AO ATIVAR A TELA COM TOQUE) -->
           <div class="cinema-topbar" id="cinemaTopbar">
@@ -497,20 +506,17 @@
               <button type="button" class="cinema-ctrl-btn focusable" id="btnCinemaFavorite" onclick="toggleCurrentCinemaFavorite(event)" title="Favoritar / Desfavoritar">
                 ☆ Favorito
               </button>
-              <button type="button" class="cinema-ctrl-btn cinema-ctrl-download focusable" id="btnCinemaDownloadMp4" onclick="downloadCurrentCinemaVideo(event)" title="Baixar vídeo em MP4">
-                ⬇️ Baixar MP4
+              <button type="button" class="cinema-ctrl-btn cinema-ctrl-download focusable" id="btnCinemaDownloadMp4" onclick="downloadCurrentCinemaVideo(event)" title="Baixar vídeo">
+                ⬇️ Download
+              </button>
+              <button type="button" class="cinema-ctrl-btn focusable" id="btnCinemaPip" onclick="enterFloatingPipMode(event)" title="Picture-in-Picture (Janela Flutuante)">
+                🗖 PiP
               </button>
               <button type="button" class="cinema-ctrl-btn focusable" id="btnCinemaFullscreenTop" onclick="toggleWebBrowserFullscreen(event)" title="Tela Cheia do Navegador (F)">
                 ⛶ Tela Cheia
               </button>
               <button type="button" class="cinema-ctrl-btn focusable" id="btnCinemaAspectRatio" onclick="cycleVideoAspectRatio()" title="Alternar formato de preenchimento da tela">
                 📐 Tela: Preencher 100%
-              </button>
-              <button type="button" class="cinema-ctrl-btn focusable" id="btnPrevEpisode" onclick="skipSeriesEpisode(-1)">
-                ⏮ Anterior
-              </button>
-              <button type="button" class="cinema-ctrl-btn cinema-ctrl-next focusable" id="btnNextEpisode" onclick="skipSeriesEpisode(1)">
-                ⏭ Pular Ep.
               </button>
               <button type="button" class="cinema-ctrl-btn focusable" id="btnToggleEpDrawer" onclick="toggleCinemaEpisodeDrawer()">
                 📋 Episódios
@@ -527,7 +533,7 @@
               <button type="button" class="cinema-center-btn focusable" id="btnCenterRewind10" onclick="seekCinemaVideo(-10, event)" title="Voltar 10 segundos">
                 <svg viewBox="0 0 36 36" width="38" height="38" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M18 6a12 12 0 1 0 11.3 8" />
-                  <polyline points="12 2 18 6 14 11" />
+                  <polyline points="24 2 18 6 22 10" />
                   <text x="18" y="22.5" text-anchor="middle" fill="currentColor" stroke="none" font-size="10.5" font-weight="800" font-family="Inter, sans-serif">10</text>
                 </svg>
               </button>
@@ -559,7 +565,7 @@
               <button type="button" class="cinema-center-btn focusable" id="btnCenterForward10" onclick="seekCinemaVideo(10, event)" title="Avançar 10 segundos">
                 <svg viewBox="0 0 36 36" width="38" height="38" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M18 6a12 12 0 1 1-11.3 8" />
-                  <polyline points="24 2 18 6 22 11" />
+                  <polyline points="12 2 18 6 14 10" />
                   <text x="18" y="22.5" text-anchor="middle" fill="currentColor" stroke="none" font-size="10.5" font-weight="800" font-family="Inter, sans-serif">10</text>
                 </svg>
               </button>
@@ -570,7 +576,12 @@
               <span class="cinema-time-lbl" id="cinemaTimeCurrent">00:00</span>
               <input type="range" class="cinema-seek-slider focusable" id="cinemaSeekSlider" min="0" max="1000" value="0" step="1" onpointerdown="handleCinemaTimelinePointerDown(event)" ontouchstart="handleCinemaTimelinePointerDown(event)" onmousedown="handleCinemaTimelinePointerDown(event)" oninput="handleCinemaTimelineInput(this.value, event)" onchange="handleCinemaTimelineCommit(this.value, event)" />
               <span class="cinema-time-lbl" id="cinemaTimeDuration">00:00</span>
-              <button type="button" class="cinema-mute-btn focusable" id="btnCinemaMute" onclick="toggleCinemaMute(event)" title="Mudo / Som">🔊</button>
+              <div class="cinema-volume-group" id="cinemaVolumeGroup">
+                <button type="button" class="cinema-mute-btn focusable" id="btnCinemaMute" onclick="toggleCinemaMute(event)" title="Mudo / Som">🔊</button>
+                <div class="cinema-volume-slider-wrap">
+                  <input type="range" class="cinema-volume-slider focusable" id="cinemaVolumeSlider" min="0" max="1" step="0.05" value="1" oninput="handleCinemaVolumeInput(this.value, event)" onchange="handleCinemaVolumeCommit(this.value, event)" title="Ajustar Volume" />
+                </div>
+              </div>
               <button type="button" class="cinema-mute-btn cinema-bottom-cast-btn focusable" id="btnCinemaBottomCast" onclick="triggerChromecastAction(event)" title="Chromecast / Transmitir para TV">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>

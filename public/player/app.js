@@ -1241,6 +1241,10 @@ function syncCenterPlayPauseIcon() {
 
 function setCinemaBufferingState(isBuffering) {
   const centerBtn = document.getElementById('btnCenterPlayPause');
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  if (cinemaVideo) {
+    cinemaVideo.removeAttribute('poster');
+  }
   if (centerBtn) {
     centerBtn.classList.toggle('is-buffering', Boolean(isBuffering));
   }
@@ -1440,14 +1444,54 @@ function handleCinemaTimelineCommit(sliderValOrEvent, maybeEvent) {
   scheduleCinemaTopbarHide(false);
 }
 
+let cinemaSavedVolume = 1.0;
+
+function handleCinemaVolumeInput(val, event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  const slider = document.getElementById('cinemaVolumeSlider');
+  const muteBtn = document.getElementById('btnCinemaMute');
+  const num = Math.max(0, Math.min(1, parseFloat(val) || 0));
+
+  if (cinemaVideo) {
+    cinemaVideo.volume = num;
+    cinemaVideo.muted = num === 0;
+  }
+  if (num > 0) {
+    cinemaSavedVolume = num;
+  }
+  if (slider && Math.abs(parseFloat(slider.value) - num) > 0.01) {
+    slider.value = num;
+  }
+  if (muteBtn) {
+    muteBtn.textContent = num === 0 ? '🔇' : (num < 0.5 ? '🔉' : '🔊');
+  }
+  scheduleCinemaTopbarHide();
+}
+
+function handleCinemaVolumeCommit(val, event) {
+  handleCinemaVolumeInput(val, event);
+}
+
 function toggleCinemaMute(event) {
   if (event && event.stopPropagation) event.stopPropagation();
   const cinemaVideo = document.getElementById('cinemaVideoElement');
+  const slider = document.getElementById('cinemaVolumeSlider');
   const muteBtn = document.getElementById('btnCinemaMute');
   if (!cinemaVideo) return;
-  cinemaVideo.muted = !cinemaVideo.muted;
-  if (muteBtn) {
-    muteBtn.textContent = cinemaVideo.muted ? '🔇' : '🔊';
+
+  if (cinemaVideo.muted || cinemaVideo.volume === 0) {
+    cinemaVideo.muted = false;
+    const restore = cinemaSavedVolume > 0.05 ? cinemaSavedVolume : 1.0;
+    cinemaVideo.volume = restore;
+    if (slider) slider.value = restore;
+    if (muteBtn) muteBtn.textContent = restore < 0.5 ? '🔉' : '🔊';
+  } else {
+    cinemaSavedVolume = cinemaVideo.volume > 0 ? cinemaVideo.volume : 1.0;
+    cinemaVideo.muted = true;
+    cinemaVideo.volume = 0;
+    if (slider) slider.value = 0;
+    if (muteBtn) muteBtn.textContent = '🔇';
   }
   scheduleCinemaTopbarHide();
 }
@@ -2114,14 +2158,19 @@ function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
 }
 
 function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSeconds = 0) {
-  video.muted = false;
-  video.volume = 1.0;
-  video.onerror = null;
-  // Remove crossorigin na carga inicial para nunca bloquear redirecionamentos 302 CDN (ex: r2-auth.atlaspainel.net)
+  video.removeAttribute('poster');
   video.removeAttribute('crossorigin');
+  video.onerror = null;
 
   if (video.id === 'cinemaVideoElement') {
+    video.volume = typeof cinemaSavedVolume === 'number' ? cinemaSavedVolume : 1.0;
+    video.muted = video.volume === 0;
+    const volSlider = document.getElementById('cinemaVolumeSlider');
+    if (volSlider) volSlider.value = video.volume;
     setCinemaBufferingState(true);
+  } else {
+    video.muted = false;
+    video.volume = 1.0;
   }
 
   let hasAppliedResumeSeek = false;
@@ -2150,8 +2199,16 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
   const rawStreamUrl = extractRawStreamUrl(streamUrl, item);
   const rawCheck = (rawStreamUrl || streamUrl || '').toLowerCase();
   const isMovieOrSeriesVod = rawCheck.includes('/movie/') || rawCheck.includes('/series/') || rawCheck.endsWith('.mp4') || rawCheck.endsWith('.mkv');
-  const isTsStream = !isMovieOrSeriesVod && (rawCheck.endsWith('.ts') || (streamUrl && streamUrl.includes('.ts')));
-  const isM3u8Stream = !isMovieOrSeriesVod && (rawCheck.includes('.m3u8') || (streamUrl && streamUrl.includes('.m3u8')));
+  const isTsStream = !isMovieOrSeriesVod && (
+    rawCheck.endsWith('.ts') ||
+    (streamUrl && streamUrl.includes('.ts')) ||
+    (appState.preferences && appState.preferences.streamFormat === 'ts')
+  );
+  const isM3u8Stream = !isMovieOrSeriesVod && (
+    rawCheck.includes('.m3u8') ||
+    (streamUrl && streamUrl.includes('.m3u8')) ||
+    (appState.preferences && appState.preferences.streamFormat !== 'ts')
+  );
 
   const candidates = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod);
   const primaryUrl = candidates[0] || streamUrl;
@@ -2617,8 +2674,8 @@ function startSeriesEpisodeInCinema(seasonKey, epIndex, forceChoice = null) {
   activeEpisodeIndex = epIndex;
   currentCinemaContext = { mode: 'series', item: activeSeriesItem, episode: ep };
 
-  // Mostra controles de episódios e download MP4 para séries
-  ['btnPrevEpisode', 'btnNextEpisode', 'btnToggleEpDrawer', 'btnCinemaDownloadMp4'].forEach(id => {
+  // Mostra controles de episódios, download e PiP para séries
+  ['btnToggleEpDrawer', 'btnCinemaDownloadMp4', 'btnCinemaPip'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove('hidden');
   });
@@ -2714,17 +2771,143 @@ function renderCinemaDrawerEpisodes() {
   });
 }
 
-function closeCinemaPlayer() {
+let isPipModeActive = false;
+let pipDragState = {
+  isDragging: false,
+  startX: 0,
+  startY: 0,
+  initialLeft: 0,
+  initialTop: 0
+};
+
+function setupPipDraggable(pipEl) {
+  const handle = document.getElementById('cinemaPipTopControls') || pipEl;
+
+  const onPointerDown = (e) => {
+    if (e.target.closest('button')) return;
+    if (e.button !== undefined && e.button !== 0) return;
+
+    pipDragState.isDragging = true;
+    const rect = pipEl.getBoundingClientRect();
+    pipDragState.startX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+    pipDragState.startY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+    pipDragState.initialLeft = rect.left;
+    pipDragState.initialTop = rect.top;
+
+    pipEl.style.bottom = 'auto';
+    pipEl.style.right = 'auto';
+    pipEl.style.left = `${rect.left}px`;
+    pipEl.style.top = `${rect.top}px`;
+
+    document.addEventListener('pointermove', onPointerMove, { passive: false });
+    document.addEventListener('pointerup', onPointerUp);
+    document.addEventListener('touchmove', onPointerMove, { passive: false });
+    document.addEventListener('touchend', onPointerUp);
+  };
+
+  const onPointerMove = (e) => {
+    if (!pipDragState.isDragging) return;
+    if (e.cancelable) e.preventDefault();
+
+    const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+    const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+
+    const deltaX = clientX - pipDragState.startX;
+    const deltaY = clientY - pipDragState.startY;
+
+    const newLeft = Math.max(8, Math.min(window.innerWidth - pipEl.offsetWidth - 8, pipDragState.initialLeft + deltaX));
+    const newTop = Math.max(8, Math.min(window.innerHeight - pipEl.offsetHeight - 8, pipDragState.initialTop + deltaY));
+
+    pipEl.style.left = `${newLeft}px`;
+    pipEl.style.top = `${newTop}px`;
+  };
+
+  const onPointerUp = () => {
+    pipDragState.isDragging = false;
+    document.removeEventListener('pointermove', onPointerMove);
+    document.removeEventListener('pointerup', onPointerUp);
+    document.removeEventListener('touchmove', onPointerMove);
+    document.removeEventListener('touchend', onPointerUp);
+  };
+
+  handle.onpointerdown = onPointerDown;
+  handle.ontouchstart = onPointerDown;
+}
+
+function enterFloatingPipMode(event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  const cinemaWrap = document.getElementById('cinemaPlayerWrap');
+  const cinemaScreen = document.getElementById('screenCinemaPlayer');
+  if (!cinemaVideo || !cinemaWrap || !cinemaScreen) return;
+
+  isPipModeActive = true;
+  clearTimeout(cinemaTopbarTimer);
+
+  const targetScreen = cinemaReturnScreen || 'screenHome';
+  navigateToScreen(targetScreen);
+
+  cinemaScreen.classList.add('has-pip-active');
+  cinemaWrap.classList.add('pip-mode');
+
+  if (!cinemaWrap.style.left && !cinemaWrap.style.top) {
+    cinemaWrap.style.bottom = '24px';
+    cinemaWrap.style.right = '24px';
+  }
+
+  setupPipDraggable(cinemaWrap);
+}
+
+function restoreFromPipToCinema(event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  const cinemaWrap = document.getElementById('cinemaPlayerWrap');
+  const cinemaScreen = document.getElementById('screenCinemaPlayer');
+  if (!cinemaWrap || !cinemaScreen) return;
+
+  isPipModeActive = false;
+  cinemaScreen.classList.remove('has-pip-active');
+  cinemaWrap.classList.remove('pip-mode');
+
+  navigateToScreen('screenCinemaPlayer');
+  scheduleCinemaTopbarHide();
+}
+
+function closeCinemaPlayer(forceStop = false, event = null) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  const cinemaWrap = document.getElementById('cinemaPlayerWrap');
+  const cinemaScreen = document.getElementById('screenCinemaPlayer');
+
+  // Se o usuário clicou em Voltar enquanto o vídeo estava rodando (e não foi clique no ✕ do PiP), entra em PiP flutuante
+  if (!forceStop && !isPipModeActive && cinemaVideo && !cinemaVideo.paused && cinemaVideo.readyState >= 2) {
+    enterFloatingPipMode(event);
+    return;
+  }
+
+  isPipModeActive = false;
+  if (cinemaScreen) cinemaScreen.classList.remove('has-pip-active');
+  if (cinemaWrap) {
+    cinemaWrap.classList.remove('pip-mode');
+    cinemaWrap.style.left = '';
+    cinemaWrap.style.top = '';
+    cinemaWrap.style.right = '';
+    cinemaWrap.style.bottom = '';
+    cinemaWrap.style.width = '';
+    cinemaWrap.style.height = '';
+  }
+
   clearTimeout(cinemaTopbarTimer);
   saveCurrentCinemaWatchProgress();
   setCinemaBufferingState(false);
-  const cinemaVideo = document.getElementById('cinemaVideoElement');
   destroyPlayers();
+
   if (cinemaVideo) {
     cinemaVideo.pause();
     cinemaVideo.removeAttribute('src');
+    cinemaVideo.removeAttribute('poster');
     cinemaVideo.load();
   }
+
   const targetScreen = cinemaReturnScreen || 'screenCatalog';
   navigateToScreen(targetScreen);
   if (targetScreen === 'screenMediaDetail') {

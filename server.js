@@ -1272,27 +1272,46 @@ app.get('/api/proxy/stream', async (req, res) => {
     }
 
     // Reutiliza URL final de redirecionamento em cache para Filmes e Séries (evita gerar múltiplos tokens em Range requests simultâneos)
-    let fetchUrl = targetUrl;
+    // Trata múltiplos saltos de redirecionamento HTTP (301/302/307/308) com cabeçalhos preservados e Range
+    let currentFetchUrl = targetUrl;
     const cachedRedirect = vodRedirectCache.get(targetUrl);
     if (cachedRedirect && Date.now() - cachedRedirect.ts < 5 * 60 * 1000) {
-      fetchUrl = cachedRedirect.url;
+      currentFetchUrl = cachedRedirect.url;
     }
-
-    let upstream = await fetch(fetchUrl, {
-      headers,
-      redirect: 'follow',
-      signal: abortController.signal
-    });
-
-    // Se o token em cache expirou, refaz a partir da URL original
-    if (!upstream.ok && upstream.status !== 206 && fetchUrl !== targetUrl) {
-      vodRedirectCache.delete(targetUrl);
-      fetchUrl = targetUrl;
-      upstream = await fetch(targetUrl, {
+    let upstream = null;
+    for (let redirectCount = 0; redirectCount < 6; redirectCount++) {
+      upstream = await fetch(currentFetchUrl, {
         headers,
-        redirect: 'follow',
+        redirect: 'manual',
         signal: abortController.signal
       });
+
+      if (
+        (upstream.status === 301 || upstream.status === 302 || upstream.status === 303 || upstream.status === 307 || upstream.status === 308) &&
+        upstream.headers.get('location')
+      ) {
+        let loc = upstream.headers.get('location').trim();
+        if (loc.startsWith('/')) {
+          const uObj = new URL(currentFetchUrl);
+          loc = `${uObj.protocol}//${uObj.host}${loc}`;
+        }
+        currentFetchUrl = loc;
+        if (isVodOrSeries || currentFetchUrl.includes('atlaspainel') || currentFetchUrl.includes('/vauth/')) {
+          vodRedirectCache.set(targetUrl, { url: currentFetchUrl, ts: Date.now() });
+        }
+      } else if (!upstream.ok && upstream.status !== 206 && currentFetchUrl !== targetUrl) {
+        // Se a URL final falhou (token expirou), tenta novamente a partir da URL original
+        vodRedirectCache.delete(targetUrl);
+        currentFetchUrl = targetUrl;
+        upstream = await fetch(currentFetchUrl, {
+          headers,
+          redirect: 'follow',
+          signal: abortController.signal
+        });
+        break;
+      } else {
+        break;
+      }
     }
 
     if (!upstream.ok && upstream.status !== 206) {
@@ -1300,7 +1319,7 @@ app.get('/api/proxy/stream', async (req, res) => {
     }
 
     const contentType = upstream.headers.get('content-type') || '';
-    const finalUrl = upstream.url || fetchUrl;
+    const finalUrl = upstream.url || currentFetchUrl;
     if (finalUrl && finalUrl !== targetUrl && isVodOrSeries) {
       vodRedirectCache.set(targetUrl, { url: finalUrl, ts: Date.now() });
     }

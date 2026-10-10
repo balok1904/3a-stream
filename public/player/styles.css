@@ -727,10 +727,9 @@ body {
 }
 
 .settings-header {
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 35;
-  background: rgba(9, 11, 16, 0.92);
+  background: transparent;
   backdrop-filter: blur(10px);
   padding: 6px 0;
   display: flex;
@@ -1525,8 +1524,7 @@ dialog.app-dialog::backdrop {
 }
 
 .media-hero-topbar {
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 35;
   display: flex;
   align-items: center;
@@ -1966,7 +1964,9 @@ dialog.app-dialog::backdrop {
   justify-content: space-between;
   padding: 8px max(14px, env(safe-area-inset-right, 14px)) 12px max(14px, env(safe-area-inset-left, 14px));
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
@@ -1978,8 +1978,8 @@ dialog.app-dialog::backdrop {
 
 /* Botão de Voltar no canto superior esquerdo proporcional e responsivo em todas as resoluções */
 .cinema-back-top-left-btn {
-  background: linear-gradient(135deg, rgba(124, 58, 237, 0.92) 0%, rgba(2, 132, 199, 0.92) 55%, rgba(6, 182, 212, 0.95) 100%);
-  border: 1px solid rgba(103, 232, 249, 0.5);
+  background: rgba(20, 26, 42, 0.88);
+  border: 1px solid rgba(56, 189, 248, 0.4);
   color: #ffffff;
   height: clamp(27px, 4vh, 33px);
   padding: 0 clamp(9px, 1.4vw, 13px);
@@ -2134,8 +2134,9 @@ dialog.app-dialog::backdrop {
   justify-content: center;
   gap: clamp(18px, 4.5vw, 50px);
   padding: 12px 22px;
-  border-radius: 999px;
-  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0.15) 70%, transparent 100%);
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
   transition: opacity 0.25s ease, transform 0.25s ease;
   pointer-events: auto;
 }
@@ -2186,10 +2187,15 @@ dialog.app-dialog::backdrop {
   transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
 }
 
+.cinema-center-play-btn.is-buffering {
+  background: rgba(15, 18, 28, 0.45) !important;
+  box-shadow: none !important;
+}
+
 .cinema-center-play-btn.is-buffering::after {
   content: '';
   position: absolute;
-  inset: -5px;
+  inset: -6px;
   border-radius: 50%;
   border: 2.5px solid transparent;
   border-top-color: #38bdf8;
@@ -2283,6 +2289,53 @@ dialog.app-dialog::backdrop {
   flex-shrink: 0;
 }
 
+.cinema-volume-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(20, 26, 42, 0.85);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 2px 8px 2px 3px;
+  border-radius: 999px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.cinema-volume-group:hover,
+.cinema-volume-group:focus-within {
+  background: rgba(28, 36, 58, 0.95);
+  border-color: rgba(56, 189, 248, 0.6);
+}
+
+.cinema-volume-slider-wrap {
+  width: clamp(50px, 8vw, 75px);
+  display: flex;
+  align-items: center;
+}
+
+.cinema-volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.3);
+  outline: none;
+  cursor: pointer;
+  accent-color: #38bdf8;
+}
+
+.cinema-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #38bdf8;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.9);
+}
+
 /* Oculta qualquer botão central de Play/Pause ou Fullscreen nativo do WebView/Chromium */
 video::-webkit-media-controls-fullscreen-button,
 video::-webkit-media-controls-overlay-play-button,
@@ -2296,14 +2349,127 @@ video::-webkit-media-controls-start-playback-button {
 /* Modos de Preenchimento de Vídeo (Tela Cheia 100% / Original / Zoom) */
 .video-fit-fill {
   object-fit: fill !important;
+  width: 100% !important;
+  height: 100% !important;
+  background: #000000 !important;
 }
 
 .video-fit-contain {
   object-fit: contain !important;
+  width: 100% !important;
+  height: 100% !important;
+  background: #000000 !important;
 }
 
 .video-fit-cover {
   object-fit: cover !important;
+  width: 100% !important;
+  height: 100% !important;
+  background: #000000 !important;
+}
+
+/* =========================================================
+   MODO PICTURE-IN-PICTURE (PIP FLUTUANTE) COM ARRASTE E REDIMENSIONAMENTO
+   ========================================================= */
+#screenCinemaPlayer.has-pip-active {
+  display: block !important;
+  pointer-events: none !important;
+  background: transparent !important;
+  z-index: 999990 !important;
+}
+
+.cinema-player-wrap.pip-mode {
+  position: fixed !important;
+  bottom: 24px !important;
+  right: 24px !important;
+  width: clamp(260px, 32vw, 420px) !important;
+  height: clamp(146px, 18vw, 236px) !important;
+  z-index: 999999 !important;
+  border-radius: 12px !important;
+  border: 2px solid rgba(56, 189, 248, 0.6) !important;
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.95), 0 0 20px rgba(56, 189, 248, 0.35) !important;
+  overflow: hidden !important;
+  pointer-events: auto !important;
+  touch-action: none;
+  resize: both;
+  min-width: 200px;
+  min-height: 112px;
+  max-width: 90vw;
+  max-height: 85vh;
+  cursor: grab;
+  background: #000000 !important;
+}
+
+.cinema-player-wrap.pip-mode:active {
+  cursor: grabbing;
+}
+
+.cinema-pip-top-controls {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.88) 0%, transparent 100%);
+  padding: 6px 10px;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: auto;
+}
+
+.cinema-player-wrap.pip-mode .cinema-pip-top-controls {
+  display: flex !important;
+}
+
+.cinema-player-wrap.pip-mode .cinema-topbar,
+.cinema-player-wrap.pip-mode .cinema-center-controls,
+.cinema-player-wrap.pip-mode .cinema-bottom-bar,
+.cinema-player-wrap.pip-mode .cinema-ep-drawer {
+  display: none !important;
+}
+
+.cinema-pip-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: #38bdf8;
+  background: rgba(15, 23, 42, 0.8);
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  user-select: none;
+}
+
+.cinema-pip-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cinema-pip-mini-btn {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+  font-size: 13px;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cinema-pip-mini-btn:hover {
+  background: #38bdf8;
+  color: #000;
+}
+
+.cinema-pip-close-btn:hover {
+  background: #ef4444 !important;
+  color: #fff !important;
+  border-color: #ef4444 !important;
 }
 
 .cinema-ep-drawer {
