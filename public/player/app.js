@@ -1587,6 +1587,10 @@ function scheduleCinemaTopbarHide(shouldSyncTimeline = true) {
 }
 
 function handleCinemaStageTap(event) {
+  if (isPipModeActive) {
+    restoreFromPipToCinema(event);
+    return;
+  }
   scheduleCinemaTopbarHide();
 }
 
@@ -2075,6 +2079,7 @@ function startVodOrLiveInCinema(item, mode = 'vod', forceChoice = null) {
   }
 
   stopVideoPlayback();
+  clearFloatingPipMode();
   cinemaReturnScreen = 'screenCatalog';
   currentCinemaContext = { mode, item, episode: null };
 
@@ -2688,6 +2693,7 @@ function startSeriesEpisodeInCinema(seasonKey, epIndex, forceChoice = null) {
   }
 
   addRecentItem('series', activeSeriesItem);
+  clearFloatingPipMode();
   cinemaReturnScreen = 'screenMediaDetail';
   activeSeasonKey = String(seasonKey);
   activeEpisodeIndex = epIndex;
@@ -2897,6 +2903,21 @@ function triggerNativeOrAppPip(event) {
   enterFloatingPipMode(event);
 }
 
+function handleCinemaTopLeftBack(event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+
+  // Ao clicar no botão Voltar superior da esquerda com o vídeo em reprodução:
+  // Volta 1 janela para a tela anterior dentro do app e deixa o PiP flutuante sobre ela!
+  if (cinemaVideo && (!cinemaVideo.paused || cinemaVideo.currentTime > 0)) {
+    enterFloatingPipMode(event);
+    return;
+  }
+
+  // Se o vídeo já estiver pausado ou terminado, fecha o player normalmente
+  closeCinemaPlayer(true, event);
+}
+
 function enterFloatingPipMode(event) {
   if (event && event.stopPropagation) event.stopPropagation();
   const cinemaVideo = document.getElementById('cinemaVideoElement');
@@ -2907,8 +2928,15 @@ function enterFloatingPipMode(event) {
   isPipModeActive = true;
   clearTimeout(cinemaTopbarTimer);
 
-  const targetScreen = cinemaReturnScreen || 'screenHome';
+  const targetScreen = cinemaReturnScreen || 'screenCatalog';
   navigateToScreen(targetScreen);
+
+  if (targetScreen === 'screenMediaDetail') {
+    updateSeriesHeroWatchButton();
+    renderMediaDetailTabs();
+  } else if (targetScreen === 'screenCatalog') {
+    renderCatalogItems(false);
+  }
 
   cinemaScreen.classList.add('has-pip-active');
   cinemaWrap.classList.add('pip-mode');
@@ -2921,16 +2949,27 @@ function enterFloatingPipMode(event) {
   setupPipDraggable(cinemaWrap);
 }
 
+function clearFloatingPipMode() {
+  if (isPipModeActive) {
+    isPipModeActive = false;
+    const s = document.getElementById('screenCinemaPlayer');
+    const w = document.getElementById('cinemaPlayerWrap');
+    if (s) s.classList.remove('has-pip-active');
+    if (w) {
+      w.classList.remove('pip-mode');
+      w.style.left = '';
+      w.style.top = '';
+      w.style.right = '';
+      w.style.bottom = '';
+      w.style.width = '';
+      w.style.height = '';
+    }
+  }
+}
+
 function restoreFromPipToCinema(event) {
   if (event && event.stopPropagation) event.stopPropagation();
-  const cinemaWrap = document.getElementById('cinemaPlayerWrap');
-  const cinemaScreen = document.getElementById('screenCinemaPlayer');
-  if (!cinemaWrap || !cinemaScreen) return;
-
-  isPipModeActive = false;
-  cinemaScreen.classList.remove('has-pip-active');
-  cinemaWrap.classList.remove('pip-mode');
-
+  clearFloatingPipMode();
   navigateToScreen('screenCinemaPlayer');
   scheduleCinemaTopbarHide();
 }

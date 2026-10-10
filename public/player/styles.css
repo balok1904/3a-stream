@@ -2382,8 +2382,8 @@ video::-webkit-media-controls-start-playback-button {
 
 .cinema-player-wrap.pip-mode {
   position: fixed !important;
-  bottom: 24px !important;
-  right: 24px !important;
+  bottom: 24px;
+  right: 24px;
   width: clamp(260px, 32vw, 420px) !important;
   height: clamp(146px, 18vw, 236px) !important;
   z-index: 999999 !important;
