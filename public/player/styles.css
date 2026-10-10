@@ -1195,6 +1195,7 @@ body {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  background: #000000 !important;
 }
 
 .video-idle-placeholder {
@@ -2120,6 +2121,7 @@ dialog.app-dialog::backdrop {
   width: 100%;
   height: 100%;
   display: block;
+  background: #000000 !important;
 }
 
 /* CONTROLES CENTRAIS DO PLAYER DE CINEMA (CONFORME PRINT 3: -10s, ANTERIOR, PLAY/PAUSE, PRÓXIMO, +10s) */

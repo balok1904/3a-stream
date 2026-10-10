@@ -1,6 +1,6 @@
 // ============================================================================
 // 3A STREAM - PLAYER APPLICATION & ANDROID / TV BOX TESTBENCH
-// ============================================================================
+const PURE_BLACK_POSTER = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 function getOrCreateDeviceMac() {
   let saved = localStorage.getItem('3a_device_mac');
@@ -1243,7 +1243,7 @@ function setCinemaBufferingState(isBuffering) {
   const centerBtn = document.getElementById('btnCenterPlayPause');
   const cinemaVideo = document.getElementById('cinemaVideoElement');
   if (cinemaVideo) {
-    cinemaVideo.removeAttribute('poster');
+    cinemaVideo.poster = PURE_BLACK_POSTER;
   }
   if (centerBtn) {
     centerBtn.classList.toggle('is-buffering', Boolean(isBuffering));
@@ -2177,7 +2177,7 @@ function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
 }
 
 function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSeconds = 0) {
-  video.removeAttribute('poster');
+  video.poster = PURE_BLACK_POSTER;
   video.removeAttribute('crossorigin');
   video.onerror = null;
 
@@ -2979,7 +2979,7 @@ function closeCinemaPlayer(forceStop = false, event = null) {
   if (cinemaVideo) {
     cinemaVideo.pause();
     cinemaVideo.removeAttribute('src');
-    cinemaVideo.removeAttribute('poster');
+    cinemaVideo.poster = PURE_BLACK_POSTER;
     cinemaVideo.load();
   }
 

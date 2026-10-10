@@ -5,6 +5,7 @@ import android.app.PictureInPictureParams;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.util.Rational;
 import android.net.Uri;
@@ -37,6 +38,7 @@ import androidx.mediarouter.media.MediaRouteSelector;
 import androidx.mediarouter.media.MediaRouter;
 
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.BridgeWebChromeClient;
 import com.google.android.gms.cast.CastDevice;
 import com.google.android.gms.cast.CastMediaControlIntent;
 import com.google.android.gms.cast.MediaInfo;
@@ -942,6 +944,14 @@ public class MainActivity extends BridgeActivity {
                 settings.setMediaPlaybackRequiresUserGesture(false);
                 settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
                 settings.setDomStorageEnabled(true);
+                webView.setWebChromeClient(new BridgeWebChromeClient(getBridge()) {
+                    @Override
+                    public Bitmap getDefaultVideoPoster() {
+                        Bitmap bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
+                        bitmap.eraseColor(Color.BLACK);
+                        return bitmap;
+                    }
+                });
                 webView.addJavascriptInterface(new AndroidCastBridge(), "AndroidCastBridge");
 
                 webView.setDownloadListener(new DownloadListener() {
