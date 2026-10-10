@@ -1642,14 +1642,33 @@ function initCinemaTouchWakeup() {
       }
     });
     cinemaVideo.addEventListener('play', () => {
+      updateNativeVideoPlayingState(true);
+      syncCenterPlayPauseIcon();
+      scheduleCinemaTopbarHide();
+    });
+    cinemaVideo.addEventListener('playing', () => {
+      updateNativeVideoPlayingState(true);
+      setCinemaBufferingState(false);
       syncCenterPlayPauseIcon();
       scheduleCinemaTopbarHide();
     });
     cinemaVideo.addEventListener('pause', () => {
+      updateNativeVideoPlayingState(false);
       setCinemaBufferingState(false);
       syncCenterPlayPauseIcon();
       saveCurrentCinemaWatchProgress();
       wakeTopbarOnTouch();
+    });
+    cinemaVideo.addEventListener('ended', () => {
+      updateNativeVideoPlayingState(false);
+    });
+    cinemaVideo.addEventListener('enterpictureinpicture', () => {
+      document.body.classList.add('native-pip-active');
+      document.documentElement.classList.add('native-pip-active');
+    });
+    cinemaVideo.addEventListener('leavepictureinpicture', () => {
+      document.body.classList.remove('native-pip-active');
+      document.documentElement.classList.remove('native-pip-active');
     });
     cinemaVideo.addEventListener('seeking', wakeTopbarOnTouch);
     cinemaVideo.addEventListener('seeked', () => {
@@ -2834,6 +2853,50 @@ function setupPipDraggable(pipEl) {
   handle.ontouchstart = onPointerDown;
 }
 
+function updateNativeVideoPlayingState(isPlaying) {
+  if (window.AndroidCastBridge && typeof window.AndroidCastBridge.setVideoPlayingState === 'function') {
+    try {
+      window.AndroidCastBridge.setVideoPlayingState(Boolean(isPlaying));
+    } catch (_) {}
+  }
+}
+
+window.handleNativePipModeChange = function(isInPip) {
+  document.body.classList.toggle('native-pip-active', Boolean(isInPip));
+  document.documentElement.classList.toggle('native-pip-active', Boolean(isInPip));
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  if (isInPip && cinemaVideo && cinemaVideo.paused) {
+    cinemaVideo.play().catch(() => {});
+  }
+};
+
+function triggerNativeOrAppPip(event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  const cinemaVideo = document.getElementById('cinemaVideoElement');
+  if (!cinemaVideo) return;
+
+  // 1. No APK Android, aciona o PiP nativo do Android OS (como YouTube!)
+  if (window.AndroidCastBridge && typeof window.AndroidCastBridge.enterNativePip === 'function') {
+    try {
+      const ok = window.AndroidCastBridge.enterNativePip();
+      if (ok) return;
+    } catch (_) {}
+  }
+
+  // 2. No navegador Web com suporte a Picture-in-Picture nativo
+  if (document.pictureInPictureEnabled && cinemaVideo.requestPictureInPicture) {
+    try {
+      cinemaVideo.requestPictureInPicture().catch(() => {
+        enterFloatingPipMode(event);
+      });
+      return;
+    } catch (_) {}
+  }
+
+  // 3. Fallback: PiP flutuante na tela
+  enterFloatingPipMode(event);
+}
+
 function enterFloatingPipMode(event) {
   if (event && event.stopPropagation) event.stopPropagation();
   const cinemaVideo = document.getElementById('cinemaVideoElement');
@@ -2878,8 +2941,20 @@ function closeCinemaPlayer(forceStop = false, event = null) {
   const cinemaWrap = document.getElementById('cinemaPlayerWrap');
   const cinemaScreen = document.getElementById('screenCinemaPlayer');
 
-  // Se o usuário clicou em Voltar enquanto o vídeo estava rodando (e não foi clique no ✕ do PiP), entra em PiP flutuante
+  // Se o usuário clicou em Voltar enquanto o vídeo estava rodando (e não foi clique explícito de parar):
   if (!forceStop && !isPipModeActive && cinemaVideo && !cinemaVideo.paused && cinemaVideo.readyState >= 2) {
+    if (window.AndroidCastBridge && typeof window.AndroidCastBridge.enterNativePip === 'function') {
+      try {
+        const ok = window.AndroidCastBridge.enterNativePip();
+        if (ok) return;
+      } catch (_) {}
+    }
+    if (document.pictureInPictureEnabled && cinemaVideo.requestPictureInPicture) {
+      try {
+        cinemaVideo.requestPictureInPicture().catch(() => {});
+        return;
+      } catch (_) {}
+    }
     enterFloatingPipMode(event);
     return;
   }
@@ -3027,6 +3102,7 @@ function destroyPlayers() {
 }
 
 function stopVideoPlayback() {
+  updateNativeVideoPlayingState(false);
   saveCurrentCinemaWatchProgress();
   setCinemaBufferingState(false);
   appState.currentPlayingId = null;

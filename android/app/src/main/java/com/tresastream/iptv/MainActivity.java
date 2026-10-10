@@ -1,9 +1,12 @@
 package com.tresastream.iptv;
 
 import android.app.DownloadManager;
+import android.app.PictureInPictureParams;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Color;
+import android.util.Rational;
 import android.net.Uri;
 import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
@@ -196,6 +199,45 @@ public class MainActivity extends BridgeActivity {
         configureSystemBarsAndKeepNavigationFixed();
         startLocalStreamProxyServer();
         startWifiTvDiscoveryScan();
+    }
+
+    private static volatile boolean isVideoPlaying = false;
+
+    public void triggerAndroidNativePip() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                PictureInPictureParams.Builder pipBuilder = new PictureInPictureParams.Builder();
+                pipBuilder.setAspectRatio(new Rational(16, 9));
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    pipBuilder.setAutoEnterEnabled(true);
+                    pipBuilder.setSeamlessResizeEnabled(true);
+                }
+                enterPictureInPictureMode(pipBuilder.build());
+            } catch (Exception e) {
+                try {
+                    enterPictureInPictureMode();
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    @Override
+    public void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (isVideoPlaying && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            triggerAndroidNativePip();
+        }
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        try {
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                String js = "if (typeof handleNativePipModeChange === 'function') handleNativePipModeChange(" + isInPictureInPictureMode + ");";
+                getBridge().getWebView().evaluateJavascript(js, null);
+            }
+        } catch (Exception ignored) {}
     }
 
     @Override
@@ -845,6 +887,33 @@ public class MainActivity extends BridgeActivity {
                     return false;
                 }
             }
+        }
+
+        @JavascriptInterface
+        public void setVideoPlayingState(boolean playing) {
+            isVideoPlaying = playing;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                mainHandler.post(() -> {
+                    try {
+                        PictureInPictureParams.Builder pipBuilder = new PictureInPictureParams.Builder();
+                        pipBuilder.setAspectRatio(new Rational(16, 9));
+                        pipBuilder.setAutoEnterEnabled(playing);
+                        pipBuilder.setSeamlessResizeEnabled(true);
+                        setPictureInPictureParams(pipBuilder.build());
+                    } catch (Exception ignored) {}
+                });
+            }
+        }
+
+        @JavascriptInterface
+        public boolean enterNativePip() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                mainHandler.post(() -> {
+                    triggerAndroidNativePip();
+                });
+                return true;
+            }
+            return false;
         }
     }
 

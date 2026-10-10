@@ -2896,5 +2896,33 @@ video::-webkit-media-controls-start-playback-button {
   flex-wrap: wrap;
 }
 
+/* =========================================================
+   MODO PICTURE-IN-PICTURE NATIVO DO ANDROID (YOUTUBE STYLE)
+   ========================================================= */
+body.native-pip-active #cinemaTopbar,
+body.native-pip-active #cinemaCenterControls,
+body.native-pip-active #cinemaBottomBar,
+body.native-pip-active #cinemaEpisodeDrawer,
+body.native-pip-active #cinemaPipTopControls,
+body.native-pip-active .settings-header,
+body.native-pip-active .catalog-topbar {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+body.native-pip-active,
+body.native-pip-active #screenCinemaPlayer,
+body.native-pip-active #cinemaPlayerWrap,
+body.native-pip-active .cinema-stage,
+body.native-pip-active #cinemaVideoElement {
+  width: 100vw !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: #000000 !important;
+  object-fit: contain !important;
+}
+
 
 
