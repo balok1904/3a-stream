@@ -23,7 +23,7 @@ const appState = {
   currentPlayingId: null,
   macAddress: getOrCreateDeviceMac(),
   preferences: {
-    streamFormat: localStorage.getItem('3a_stream_format') || 'ts', // 'ts' | 'm3u8'
+    streamFormat: localStorage.getItem('3a_stream_format') || 'm3u8', // 'm3u8' | 'ts'
     timeFormat: localStorage.getItem('3a_time_format') || '24h', // '24h' | '12h'
     deviceType: localStorage.getItem('3a_device_type') || 'TV', // 'TV' | 'Mobile'
     autoStart: localStorage.getItem('3a_auto_start') !== 'false',
@@ -2156,6 +2156,11 @@ function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
     if (u && !candidates.includes(u)) candidates.push(u);
   };
 
+  if (!rawStreamUrl && streamUrl) {
+    addUnique(streamUrl);
+    return candidates;
+  }
+
   if (IS_NATIVE_APK && /^https?:\/\//i.test(rawStreamUrl)) {
     // No APK Android, 100% dos streams (Live, VOD e Séries) passam pelo Proxy Nativo Local (127.0.0.1:34567) no IP brasileiro do aparelho!
     addUnique(`http://127.0.0.1:34567/proxy?url=${encodeURIComponent(rawStreamUrl)}`);
@@ -2164,27 +2169,30 @@ function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
     return candidates;
   }
 
-  // No navegador Web: se o servidor local do PC (localhost:3000) estiver ativo, usa ele como prioridade máxima (IP brasileiro sem bloqueio 403!)
-  if (LOCAL_PC_PROXY_BASE && /^https?:\/\//i.test(rawStreamUrl)) {
-    addUnique(`${LOCAL_PC_PROXY_BASE}/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
-  }
-
+  // No navegador Web (PC, Celular, Smart TV):
+  // 1. Prioridade máxima: o Proxy Local/Servidor Express na mesma origem (/api/proxy/stream)
+  // Isso resolve CORS, Mixed Content (HTTP em HTTPS), redirecionamentos 302 e cabeçalhos de Range sem 403!
   if (/^https?:\/\//i.test(rawStreamUrl)) {
-    // Se estiver hospedado no Render (HTTPS) sem localhost:3000, tenta também localhost:3000 e HTTPS direto (evita 403 do IP americano do Render)
-    if (window.location.hostname.includes('onrender.com')) {
-      if (isMovieOrSeriesVod) {
-        addUnique(rawStreamUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/'));
+    addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+
+    // Para filmes e séries: caso o container original seja .mkv (que navegadores não tocam nativamente), tenta também .mp4
+    if (isMovieOrSeriesVod) {
+      if (rawStreamUrl.toLowerCase().endsWith('.mkv')) {
+        const mp4Alt = rawStreamUrl.replace(/\.mkv$/i, '.mp4');
+        addUnique(`/api/proxy/stream?url=${encodeURIComponent(mp4Alt)}`);
+      } else if (rawStreamUrl.toLowerCase().endsWith('.mp4')) {
+        const mkvAlt = rawStreamUrl.replace(/\.mp4$/i, '.mkv');
+        addUnique(`/api/proxy/stream?url=${encodeURIComponent(mkvAlt)}`);
       }
-      addUnique(`http://localhost:3000/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
-      addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
-      addUnique(rawStreamUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/'));
+    }
+
+    // Se estiver navegando via HTTP simples, adiciona fallback direto
+    if (window.location.protocol === 'http:') {
       addUnique(rawStreamUrl);
-    } else {
-      addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
-      addUnique(rawStreamUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/'));
+    } else if (rawStreamUrl.startsWith('https://')) {
       addUnique(rawStreamUrl);
     }
-  } else {
+  } else if (streamUrl) {
     addUnique(streamUrl);
   }
 
@@ -2238,42 +2246,40 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
     (streamUrl && streamUrl.includes('.ts')) ||
     (appState.preferences && appState.preferences.streamFormat === 'ts')
   );
-  const isM3u8Stream = !isMovieOrSeriesVod && (
-    rawCheck.includes('.m3u8') ||
-    (streamUrl && streamUrl.includes('.m3u8')) ||
-    (appState.preferences && appState.preferences.streamFormat !== 'ts')
-  );
 
   const candidates = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod);
   const primaryUrl = candidates[0] || streamUrl;
   const fallbackUrls = candidates.slice(1);
 
-  if (isTsStream && window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
-    startMpegTsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl);
-  } else if (isM3u8Stream && window.Hls && Hls.isSupported()) {
-    hlsInstance = new Hls({
-      enableWorker: true,
-      lowLatencyMode: true
-    });
-    hlsInstance.loadSource(primaryUrl);
-    hlsInstance.attachMedia(video);
-    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-      applyResumeSeekIfNeeded();
+  destroyPlayers();
+
+  if (!isMovieOrSeriesVod) {
+    // Para TV Ao Vivo:
+    // Se o usuário selecionou MPEG-TS (.ts) e o navegador suporta MSE:
+    if (isTsStream && window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
+      startMpegTsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item);
+    } else if (window.Hls && Hls.isSupported()) {
+      // Formato padrão universal para Web: HLS (.m3u8) com fallback mútuo para .ts
+      startHlsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item, resumeTimeSeconds);
+    } else {
+      // Fallback nativo HTML5 (ex: Safari iOS)
+      video.src = primaryUrl;
       video.play().catch(() => {});
-    });
-    hlsInstance.on(Hls.Events.ERROR, (event, data) => {
-      if (data.fatal) {
-        const tsRaw = rawStreamUrl ? rawStreamUrl.replace(/\.m3u8$/i, '.ts') : '';
-        const tsCands = tsRaw ? buildStreamCandidateUrls(tsRaw, item.fallbackTsUrl || '', false) : fallbackUrls;
-        if (tsCands.length > 0 && window.mpegts) {
-          destroyPlayers();
-          startMpegTsPlayback(video, tsCands[0], tsCands.slice(1), tsRaw);
-        }
-      }
-    });
+    }
   } else {
+    // Para Filmes e Séries (Cinema Player):
     let candidateIdx = 0;
-    video.onerror = () => {
+    let stallWatchdogTimer = null;
+
+    const clearWatchdog = () => {
+      if (stallWatchdogTimer) {
+        clearTimeout(stallWatchdogTimer);
+        stallWatchdogTimer = null;
+      }
+    };
+
+    const tryNextCandidate = () => {
+      clearWatchdog();
       candidateIdx++;
       if (candidateIdx < candidates.length) {
         const nextUrl = candidates[candidateIdx];
@@ -2281,6 +2287,7 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
         video.src = nextUrl;
         video.load();
         video.play().catch(() => {});
+        armWatchdog();
       } else {
         video.onerror = null;
         if (video.id === 'cinemaVideoElement') {
@@ -2288,6 +2295,22 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
         }
       }
     };
+
+    const armWatchdog = () => {
+      clearWatchdog();
+      stallWatchdogTimer = setTimeout(() => {
+        if (video.readyState < 2 && candidateIdx < candidates.length - 1) {
+          console.warn('Cinema player: vídeo demorou a responder, alternando candidato...');
+          tryNextCandidate();
+        }
+      }, 9000);
+    };
+
+    video.onerror = tryNextCandidate;
+    video.addEventListener('playing', clearWatchdog, { once: true });
+    video.addEventListener('canplay', clearWatchdog, { once: true });
+
+    armWatchdog();
     video.src = primaryUrl;
     video.play().catch(() => {});
   }
@@ -2412,9 +2435,10 @@ async function openSeriesDetailScreen(seriesItem) {
   activeSeriesItem = seriesItem;
 
   // Se for uma Série real Xtream e ainda não carregou temporadas/episódios/backdrop, busca com fallback multi-camada
-  if (seriesItem.series_id && !seriesItem.seasons && appState.catalog.xtreamOrigin) {
+  const xo = (appState.catalog && appState.catalog.xtreamOrigin) || (appState.profile && appState.profile.xtreamOrigin);
+  if (seriesItem.series_id && !seriesItem.seasons && xo) {
     showToast(`⏳ Carregando detalhes e episódios de ${seriesItem.name}...`);
-    const { baseUrl, username, password } = appState.catalog.xtreamOrigin;
+    const { baseUrl, username, password } = xo;
     const cleanBase = String(baseUrl || '').trim().replace(/\/+$/, '');
     const httpApiUrl = `${cleanBase}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_series_info&series_id=${encodeURIComponent(seriesItem.series_id)}`;
     const httpsApiUrl = httpApiUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/');
@@ -2432,18 +2456,7 @@ async function openSeriesDetailScreen(seriesItem) {
       } catch (_) {}
     }
 
-    // 2. Tenta busca direta HTTPS no próprio navegador/aparelho do usuário (IP brasileiro, CORS habilitado no Cloudflare do servidor IPTV!)
-    if (!loaded) {
-      try {
-        const res = await fetch(httpsApiUrl);
-        if (res.ok) {
-          const rawData = await res.json();
-          loaded = parseRawXtreamSeriesData(rawData, seriesItem, cleanBase, username, password);
-        }
-      } catch (_) {}
-    }
-
-    // 3. Fallback via API Backend (/api/player/series-info no localhost:3000 ou Render)
+    // 2. Se estiver na Web, tenta prioritariamente via API do Backend (/api/player/series-info)
     if (!loaded) {
       try {
         const res = await apiFetch('/api/player/series-info', {
@@ -2451,14 +2464,29 @@ async function openSeriesDetailScreen(seriesItem) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             seriesId: seriesItem.series_id,
-            ...appState.catalog.xtreamOrigin
+            baseUrl: cleanBase,
+            username,
+            password
           })
         });
-        const data = await res.json();
-        if (data && data.ok && data.seasons && Object.keys(data.seasons).length > 0) {
-          seriesItem.seasons = data.seasons;
-          seriesItem.richInfo = data.info || {};
-          loaded = true;
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.ok && data.seasons && Object.keys(data.seasons).length > 0) {
+            seriesItem.seasons = data.seasons;
+            seriesItem.richInfo = data.info || {};
+            loaded = true;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 3. Fallback direto HTTPS no próprio navegador caso o backend falhe
+    if (!loaded) {
+      try {
+        const res = await fetch(httpsApiUrl);
+        if (res.ok) {
+          const rawData = await res.json();
+          loaded = parseRawXtreamSeriesData(rawData, seriesItem, cleanBase, username, password);
         }
       } catch (_) {}
     }
@@ -3115,42 +3143,171 @@ function toggleCinemaFullscreen() {
 
 let mpegtsPlayer = null;
 
-function startMpegTsPlayback(videoElement, tsUrl, fallbackUrls = [], rawStreamUrl = '') {
+function startMpegTsPlayback(videoElement, tsUrl, fallbackUrls = [], rawStreamUrl = '', item = {}) {
   try {
+    destroyPlayers();
     mpegtsPlayer = mpegts.createPlayer({
-      type: 'mse',
+      type: 'm2ts',
       isLive: true,
       url: tsUrl
+    }, {
+      enableWorker: true,
+      lazyLoad: false,
+      stashInitialSize: 128,
+      enableStashBuffer: false,
+      autoCleanupSourceBuffer: true
     });
     mpegtsPlayer.attachMediaElement(videoElement);
     mpegtsPlayer.load();
-    mpegtsPlayer.play().catch(() => {});
+    const p = mpegtsPlayer.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+
+    let hasStarted = false;
+    const onStarted = () => { hasStarted = true; };
+    videoElement.addEventListener('playing', onStarted, { once: true });
+    videoElement.addEventListener('canplay', onStarted, { once: true });
+
+    const fallbackHlsOrNext = () => {
+      destroyPlayers();
+      const m3u8Raw = (rawStreamUrl || '').replace(/\.ts$/i, '.m3u8');
+      if (m3u8Raw && window.Hls && Hls.isSupported()) {
+        const m3u8Cands = buildStreamCandidateUrls(m3u8Raw, (item && item.fallbackM3u8Url) || '', false);
+        if (m3u8Cands.length > 0) {
+          startHlsPlayback(videoElement, m3u8Cands[0], m3u8Cands.slice(1), m3u8Raw, item);
+          return;
+        }
+      }
+      if (Array.isArray(fallbackUrls) && fallbackUrls.length > 0) {
+        startMpegTsPlayback(videoElement, fallbackUrls[0], fallbackUrls.slice(1), rawStreamUrl, item);
+      }
+    };
 
     if (mpegts.Events && mpegts.Events.ERROR) {
-      mpegtsPlayer.on(mpegts.Events.ERROR, (errorType, errorDetail) => {
-        if (Array.isArray(fallbackUrls) && fallbackUrls.length > 0) {
-          const nextUrl = fallbackUrls[0];
-          const remaining = fallbackUrls.slice(1);
-          destroyPlayers();
-          startMpegTsPlayback(videoElement, nextUrl, remaining, rawStreamUrl);
-        }
+      mpegtsPlayer.on(mpegts.Events.ERROR, () => {
+        fallbackHlsOrNext();
       });
     }
+
+    setTimeout(() => {
+      if (!hasStarted && videoElement.readyState < 2) {
+        console.warn('mpegts demorou para responder, tentando fallback HLS...');
+        fallbackHlsOrNext();
+      }
+    }, 7000);
   } catch (err) {
     console.error('Erro mpegts:', err);
+    destroyPlayers();
+    const m3u8Raw = (rawStreamUrl || '').replace(/\.ts$/i, '.m3u8');
+    if (m3u8Raw && window.Hls && Hls.isSupported()) {
+      const m3u8Cands = buildStreamCandidateUrls(m3u8Raw, (item && item.fallbackM3u8Url) || '', false);
+      if (m3u8Cands.length > 0) {
+        startHlsPlayback(videoElement, m3u8Cands[0], m3u8Cands.slice(1), m3u8Raw, item);
+      }
+    }
+  }
+}
+
+function startHlsPlayback(videoElement, hlsUrl, fallbackUrls = [], rawStreamUrl = '', item = {}, resumeTimeSeconds = 0) {
+  try {
+    destroyPlayers();
+    hlsInstance = new Hls({
+      enableWorker: true,
+      lowLatencyMode: false,
+      backBufferLength: 30,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 60,
+      manifestLoadingTimeOut: 15000,
+      manifestLoadingMaxRetry: 4,
+      levelLoadingTimeOut: 15000,
+      levelLoadingMaxRetry: 4,
+      fragLoadingTimeOut: 20000,
+      fragLoadingMaxRetry: 6,
+      startLevel: -1
+    });
+
+    let hasRecoveredMedia = false;
+    let hasRecoveredNetwork = false;
+    let hasStarted = false;
+
+    videoElement.addEventListener('playing', () => { hasStarted = true; }, { once: true });
+    videoElement.addEventListener('canplay', () => { hasStarted = true; }, { once: true });
+
+    hlsInstance.loadSource(hlsUrl);
+    hlsInstance.attachMedia(videoElement);
+
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+      if (resumeTimeSeconds > 2) {
+        try { videoElement.currentTime = resumeTimeSeconds; } catch (_) {}
+      }
+      videoElement.play().catch(() => {});
+    });
+
+    const fallbackTsOrNext = () => {
+      destroyPlayers();
+      const tsRaw = (rawStreamUrl || '').replace(/\.m3u8$/i, '.ts');
+      const tsCands = tsRaw ? buildStreamCandidateUrls(tsRaw, (item && item.fallbackTsUrl) || '', false) : [];
+      if (tsCands.length > 0 && window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
+        startMpegTsPlayback(videoElement, tsCands[0], tsCands.slice(1), tsRaw, item);
+      } else if (Array.isArray(fallbackUrls) && fallbackUrls.length > 0) {
+        startHlsPlayback(videoElement, fallbackUrls[0], fallbackUrls.slice(1), rawStreamUrl, item, resumeTimeSeconds);
+      }
+    };
+
+    hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+      if (data.fatal) {
+        switch (data.type) {
+          case Hls.ErrorTypes.NETWORK_ERROR:
+            if (!hasRecoveredNetwork) {
+              hasRecoveredNetwork = true;
+              hlsInstance.startLoad();
+            } else {
+              fallbackTsOrNext();
+            }
+            break;
+          case Hls.ErrorTypes.MEDIA_ERROR:
+            if (!hasRecoveredMedia) {
+              hasRecoveredMedia = true;
+              hlsInstance.recoverMediaError();
+            } else {
+              fallbackTsOrNext();
+            }
+            break;
+          default:
+            fallbackTsOrNext();
+            break;
+        }
+      }
+    });
+
+    setTimeout(() => {
+      if (!hasStarted && videoElement.readyState < 2) {
+        console.warn('HLS demorou para iniciar, testando fallback MPEGTS (.ts)...');
+        fallbackTsOrNext();
+      }
+    }, 8000);
+  } catch (err) {
+    console.error('Erro HLS:', err);
+    destroyPlayers();
+    const tsRaw = (rawStreamUrl || '').replace(/\.m3u8$/i, '.ts');
+    const tsCands = tsRaw ? buildStreamCandidateUrls(tsRaw, (item && item.fallbackTsUrl) || '', false) : [];
+    if (tsCands.length > 0 && window.mpegts) {
+      startMpegTsPlayback(videoElement, tsCands[0], tsCands.slice(1), tsRaw, item);
+    }
   }
 }
 
 function destroyPlayers() {
   if (hlsInstance) {
-    hlsInstance.destroy();
+    try { hlsInstance.destroy(); } catch (_) {}
     hlsInstance = null;
   }
   if (mpegtsPlayer) {
-    mpegtsPlayer.pause();
-    mpegtsPlayer.unload();
-    mpegtsPlayer.detachMediaElement();
-    mpegtsPlayer.destroy();
+    try {
+      mpegtsPlayer.pause();
+      mpegtsPlayer.unload();
+      mpegtsPlayer.detachMediaElement();
+      mpegtsPlayer.destroy();
+    } catch (_) {}
     mpegtsPlayer = null;
   }
 }
@@ -3177,10 +3334,16 @@ function stopVideoPlayback() {
 }
 
 function toggleVideoFullscreen() {
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+    return;
+  }
   const video = document.getElementById('iptvVideoPlayer');
   if (!video) return;
   if (video.requestFullscreen) {
-    video.requestFullscreen();
+    video.requestFullscreen().catch(() => {});
+  } else if (video.webkitRequestFullscreen) {
+    video.webkitRequestFullscreen();
   }
 }
 

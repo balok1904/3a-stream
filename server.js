@@ -898,15 +898,53 @@ async function fetchXtreamCatalog(xtreamUrl, username, password, preferredFormat
   return resultCatalog;
 }
 
+// Cache de informações detalhadas de séries para navegação instantânea sem sobrecarregar o provedor
+const seriesInfoCache = new Map();
+
 // Rota para buscar Temporadas, Episódios, Capas 16:9, Elenco e Backdrop de qualquer Série
 app.post('/api/player/series-info', async (req, res) => {
-  const { seriesId, baseUrl, username, password } = req.body;
+  const { seriesId, baseUrl, username, password } = req.body || {};
   if (!seriesId || !baseUrl || !username || !password) {
     return res.status(400).json({ ok: false, error: 'Parâmetros de série incompletos.' });
   }
+
+  const cleanBase = String(baseUrl).trim().replace(/\/+$/, '');
+  const cacheKey = `${cleanBase}|${seriesId}|${username}`;
+  const cached = seriesInfoCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < 10 * 60 * 1000) {
+    return res.json(cached.data);
+  }
+
   try {
-    const url = `${baseUrl.replace(/\/+$/, '')}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_series_info&series_id=${encodeURIComponent(seriesId)}`;
-    const data = await fetch(url, { headers: IPTV_HEADERS }).then(r => r.json());
+    const url = `${cleanBase}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_series_info&series_id=${encodeURIComponent(seriesId)}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+
+    const clientIp = getClientIp(req);
+    const fetchHeaders = { ...IPTV_HEADERS };
+    if (clientIp && clientIp !== 'unknown') {
+      fetchHeaders['X-Forwarded-For'] = clientIp;
+      fetchHeaders['X-Real-IP'] = clientIp;
+    }
+
+    const upstreamRes = await fetch(url, {
+      headers: fetchHeaders,
+      signal: ctrl.signal
+    });
+    clearTimeout(timer);
+
+    if (!upstreamRes.ok) {
+      throw new Error(`Servidor IPTV retornou status ${upstreamRes.status}`);
+    }
+
+    const rawText = await upstreamRes.text();
+    let data = null;
+    try {
+      data = JSON.parse(rawText);
+    } catch (_) {
+      throw new Error('Servidor IPTV retornou resposta em formato inválido.');
+    }
+
     const episodesBySeason = {};
     const seriesInfo = (data && data.info) || {};
 
@@ -925,7 +963,7 @@ app.post('/api/player/series-info', async (req, res) => {
       for (const [seasonNum, epList] of Object.entries(data.episodes)) {
         episodesBySeason[seasonNum] = (Array.isArray(epList) ? epList : []).map(ep => {
           const ext = ep.container_extension || 'mp4';
-          const directUrl = `${baseUrl.replace(/\/+$/, '')}/series/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${ep.id}.${ext}`;
+          const directUrl = `${cleanBase}/series/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${ep.id}.${ext}`;
           const epInfo = ep.info || {};
 
           if (!backdropUrl && Array.isArray(epInfo.backdrop_path) && epInfo.backdrop_path[0]) {
@@ -969,7 +1007,7 @@ app.post('/api/player/series-info', async (req, res) => {
     // Melhora resolução do backdrop TMDB quando disponível
     const hiResBackdrop = (backdropUrl || seriesInfo.cover || '').replace('/w500/', '/w1280/');
 
-    return res.json({
+    const payload = {
       ok: true,
       info: {
         ...seriesInfo,
@@ -979,16 +1017,15 @@ app.post('/api/player/series-info', async (req, res) => {
         plot: extraPlot
       },
       seasons: episodesBySeason
-    });
+    };
+
+    seriesInfoCache.set(cacheKey, { data: payload, ts: Date.now() });
+    return res.json(payload);
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// Mantém controle do stream ativo para fechar conexões antigas imediatamente (essencial para listas de 1 conexão)
-let activeUpstreamAbort = null;
-let activeUpstreamNodeStream = null;
-let activeUpstreamTargetUrl = null;
 const vodRedirectCache = new Map();
 const os = require('os');
 
@@ -1239,34 +1276,31 @@ app.get('/api/proxy/stream', async (req, res) => {
   }
 
   const isVodOrSeries = targetUrl.includes('/movie/') || targetUrl.includes('/series/') || targetUrl.endsWith('.mp4') || targetUrl.endsWith('.mkv');
-  const isSameVodTarget = isVodOrSeries && activeUpstreamTargetUrl === targetUrl;
-
-  // Encerra imediatamente o stream anterior ao trocar de canal/filme/episódio ou em canais ao vivo (respeita max_connections=1 sem quebrar múltiplos Range requests do mesmo MP4)
-  if (!isSameVodTarget) {
-    if (activeUpstreamNodeStream) {
-      try { activeUpstreamNodeStream.destroy(); } catch (_) {}
-      activeUpstreamNodeStream = null;
-    }
-    if (activeUpstreamAbort) {
-      try { activeUpstreamAbort.abort(); } catch (_) {}
-      activeUpstreamAbort = null;
-    }
-  }
-
   const abortController = new AbortController();
-  activeUpstreamAbort = abortController;
-  activeUpstreamTargetUrl = targetUrl;
+  let nodeStream = null;
 
-  req.on('close', () => {
+  // Encerra imediatamente o fetch e stream upstream caso o cliente feche a conexão ou troque de canal
+  const cleanupRequest = () => {
     try { abortController.abort(); } catch (_) {}
-  });
+    if (nodeStream) {
+      try { nodeStream.destroy(); } catch (_) {}
+      nodeStream = null;
+    }
+  };
+  req.on('close', cleanupRequest);
+  res.on('close', cleanupRequest);
 
   try {
+    const clientIp = getClientIp(req);
     const headers = {
       'User-Agent': 'IPTVSmartersPlayer',
       'Accept': '*/*',
       'Connection': 'keep-alive'
     };
+    if (clientIp && clientIp !== 'unknown') {
+      headers['X-Forwarded-For'] = clientIp;
+      headers['X-Real-IP'] = clientIp;
+    }
     if (req.headers.range) {
       headers['Range'] = req.headers.range;
     }
@@ -1281,6 +1315,7 @@ app.get('/api/proxy/stream', async (req, res) => {
     let upstream = null;
     for (let redirectCount = 0; redirectCount < 6; redirectCount++) {
       upstream = await fetch(currentFetchUrl, {
+        method: req.method === 'HEAD' ? 'HEAD' : 'GET',
         headers,
         redirect: 'manual',
         signal: abortController.signal
@@ -1291,10 +1326,9 @@ app.get('/api/proxy/stream', async (req, res) => {
         upstream.headers.get('location')
       ) {
         let loc = upstream.headers.get('location').trim();
-        if (loc.startsWith('/')) {
-          const uObj = new URL(currentFetchUrl);
-          loc = `${uObj.protocol}//${uObj.host}${loc}`;
-        }
+        try {
+          loc = new URL(loc, currentFetchUrl).href;
+        } catch (_) {}
         currentFetchUrl = loc;
         if (isVodOrSeries || currentFetchUrl.includes('atlaspainel') || currentFetchUrl.includes('/vauth/')) {
           vodRedirectCache.set(targetUrl, { url: currentFetchUrl, ts: Date.now() });
@@ -1304,6 +1338,7 @@ app.get('/api/proxy/stream', async (req, res) => {
         vodRedirectCache.delete(targetUrl);
         currentFetchUrl = targetUrl;
         upstream = await fetch(currentFetchUrl, {
+          method: req.method === 'HEAD' ? 'HEAD' : 'GET',
           headers,
           redirect: 'follow',
           signal: abortController.signal
@@ -1326,27 +1361,40 @@ app.get('/api/proxy/stream', async (req, res) => {
 
     const proxyHostPrefix = `${req.protocol}://${req.get('host')}`;
 
-    // Se for playlist HLS (.m3u8), reescreve os caminhos relativos para passarem pelo proxy
+    // Se for playlist HLS (.m3u8), reescreve os caminhos relativos e URIs de chaves/mapas para passarem pelo proxy
     if (
       (targetUrl.includes('.m3u8') || contentType.includes('mpegurl') || contentType.includes('x-mpegurl')) &&
       !contentType.includes('mp2t')
     ) {
       const m3u8Text = await upstream.text();
-      const baseOriginUrl = new URL(finalUrl);
-      const basePath = finalUrl.substring(0, finalUrl.lastIndexOf('/') + 1);
-
       const rewritten = m3u8Text
         .split(/\r?\n/)
         .map(line => {
           const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#')) return line;
+          if (!trimmed) return line;
+          if (trimmed.startsWith('#')) {
+            if (trimmed.includes('URI="')) {
+              return line.replace(/URI="([^"]+)"/g, (match, uri) => {
+                let absUri = uri;
+                try {
+                  absUri = new URL(uri, finalUrl).href;
+                } catch (_) {}
+                return `URI="${proxyHostPrefix}/api/proxy/stream?url=${encodeURIComponent(absUri)}"`;
+              });
+            }
+            return line;
+          }
           let absUrl = trimmed;
-          if (/^https?:\/\//i.test(trimmed)) {
-            absUrl = trimmed;
-          } else if (trimmed.startsWith('/')) {
-            absUrl = `${baseOriginUrl.origin}${trimmed}`;
-          } else {
-            absUrl = `${basePath}${trimmed}`;
+          try {
+            absUrl = new URL(trimmed, finalUrl).href;
+          } catch (_) {
+            if (trimmed.startsWith('/')) {
+              const uObj = new URL(finalUrl);
+              absUrl = `${uObj.origin}${trimmed}`;
+            } else {
+              const basePath = finalUrl.substring(0, finalUrl.lastIndexOf('/') + 1);
+              absUrl = `${basePath}${trimmed}`;
+            }
           }
           return `${proxyHostPrefix}/api/proxy/stream?url=${encodeURIComponent(absUrl)}`;
         })
@@ -1402,13 +1450,9 @@ app.get('/api/proxy/stream', async (req, res) => {
     }
 
     if (upstream.body) {
-      const nodeStream = Readable.fromWeb(upstream.body);
-      activeUpstreamNodeStream = nodeStream;
+      nodeStream = Readable.fromWeb(upstream.body);
       nodeStream.on('error', () => {
         if (!res.writableEnded) res.end();
-      });
-      res.on('close', () => {
-        try { nodeStream.destroy(); } catch (_) {}
       });
       nodeStream.pipe(res);
     } else {
