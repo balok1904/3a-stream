@@ -159,6 +159,70 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, localProxy: true });
 });
 
+app.get('/api/debug/test-curl', async (req, res) => {
+  const { exec } = require('child_process');
+  const https = require('https');
+  const http = require('http');
+
+  const testUrl = req.query.url || 'http://sev3u.sbs/live/371047218/357753734/3424810.m3u8';
+  const httpsTestUrl = testUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/');
+
+  const results = {};
+
+  // 1. Teste via curl nativo do Linux
+  try {
+    results.curlHttp = await new Promise(resolve => {
+      exec(`curl -I -s -m 5 -A "IPTVSmartersPlayer" "${testUrl}"`, (err, stdout, stderr) => {
+        resolve({ err: err ? err.message : null, out: stdout ? stdout.slice(0, 300) : null });
+      });
+    });
+  } catch (e) { results.curlHttp = e.message; }
+
+  try {
+    results.curlHttps = await new Promise(resolve => {
+      exec(`curl -I -s -m 5 -A "IPTVSmartersPlayer" "${httpsTestUrl}"`, (err, stdout, stderr) => {
+        resolve({ err: err ? err.message : null, out: stdout ? stdout.slice(0, 300) : null });
+      });
+    });
+  } catch (e) { results.curlHttps = e.message; }
+
+  // 2. Teste via http/https nativo do Node.js (sem undici/fetch)
+  try {
+    results.nativeNodeHttp = await new Promise(resolve => {
+      const client = testUrl.startsWith('https') ? https : http;
+      const reqObj = client.get(testUrl, {
+        headers: { 'User-Agent': 'IPTVSmartersPlayer', 'Accept': '*/*' }
+      }, (resObj) => {
+        resolve({
+          statusCode: resObj.statusCode,
+          headers: resObj.headers
+        });
+        resObj.resume();
+      });
+      reqObj.on('error', err => resolve({ err: err.message }));
+      reqObj.setTimeout(4000, () => { reqObj.abort(); resolve({ err: 'timeout' }); });
+    });
+  } catch (e) { results.nativeNodeHttp = e.message; }
+
+  try {
+    results.nativeNodeHttps = await new Promise(resolve => {
+      const reqObj = https.get(httpsTestUrl, {
+        headers: { 'User-Agent': 'IPTVSmartersPlayer', 'Accept': '*/*' }
+      }, (resObj) => {
+        resolve({
+          statusCode: resObj.statusCode,
+          headers: resObj.headers
+        });
+        resObj.resume();
+      });
+      reqObj.on('error', err => resolve({ err: err.message }));
+      reqObj.setTimeout(4000, () => { reqObj.abort(); resolve({ err: 'timeout' }); });
+    });
+  } catch (e) { results.nativeNodeHttps = e.message; }
+
+  res.json({ ok: true, results });
+});
+
 // Diretório de dados persistentes
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, '3a_stream_db.json');
