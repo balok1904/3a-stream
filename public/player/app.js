@@ -2226,66 +2226,66 @@ async function resolveClientStreamRedirect(rawUrl) {
   return rawUrl;
 }
 
-function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod, resolvedEdgeUrl = '') {
+function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
   const candidates = [];
   const addUnique = (u) => {
     if (u && !candidates.includes(u)) candidates.push(u);
   };
-
-  // 1. Se foi resolvida a URL final da CDN/Edge (ex: r2-auth.atlaspainel.net ou IP de edge 38.133.189.116/158.51.123.143)
-  // ela é a prioridade MÁXIMA porque bypassa 100% dos bloqueios de Datacenter/Cloudflare do provedor!
-  if (resolvedEdgeUrl && resolvedEdgeUrl !== rawStreamUrl && /^https?:\/\//i.test(resolvedEdgeUrl)) {
-    if (IS_NATIVE_APK) {
-      addUnique(`http://127.0.0.1:34567/proxy?url=${encodeURIComponent(resolvedEdgeUrl)}`);
-    } else {
-      addUnique(`/api/proxy/stream?url=${encodeURIComponent(resolvedEdgeUrl)}`);
-    }
-    // Fallback direto na CDN/Edge
-    if (window.location.protocol === 'http:' || resolvedEdgeUrl.startsWith('https://')) {
-      addUnique(resolvedEdgeUrl);
-    }
-  }
 
   if (!rawStreamUrl && streamUrl) {
     addUnique(streamUrl);
     return candidates;
   }
 
+  // 1. No APK Android, 100% dos streams passam pelo Proxy Nativo Local (127.0.0.1:34567) - 100% INTACTO!
   if (IS_NATIVE_APK && /^https?:\/\//i.test(rawStreamUrl)) {
-    // No APK Android, 100% dos streams (Live, VOD e Séries) passam pelo Proxy Nativo Local (127.0.0.1:34567) no IP brasileiro do aparelho!
     addUnique(`http://127.0.0.1:34567/proxy?url=${encodeURIComponent(rawStreamUrl)}`);
     addUnique(rawStreamUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/'));
     addUnique(rawStreamUrl);
     return candidates;
   }
 
-  // No navegador Web (PC, Celular, Smart TV):
+  // 2. No navegador Web: se o servidor local do PC (localhost:3000) estiver ativo:
+  if (LOCAL_PC_PROXY_BASE && /^https?:\/\//i.test(rawStreamUrl)) {
+    addUnique(`${LOCAL_PC_PROXY_BASE}/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+  }
+
   if (/^https?:\/\//i.test(rawStreamUrl)) {
-    // Se o browser estiver em HTTPS e o IPTV tiver SSL, tentar URL HTTPS direta
     const httpsRaw = rawStreamUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/');
 
-    // 1. Proxy na mesma origem com a URL do stream
-    addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
-
-    // 2. Se for filme ou série, permite que o elemento de vídeo tente tocar a URL HTTPS direta (o player do browser segue redirects nativamente sem restrição de CORS)
-    if (isMovieOrSeriesVod) {
-      if (window.location.protocol === 'https:') {
+    // Se estiver hospedado no Render (HTTPS) ou em qualquer host HTTPS:
+    if (window.location.protocol === 'https:' || window.location.hostname.includes('onrender.com')) {
+      if (isMovieOrSeriesVod) {
+        // Filmes e Séries: O elemento <video> segue o 302 direto da CDN no IP brasileiro do usuário sem bloqueio 403 e sem restrição de CORS!
+        addUnique(httpsRaw);
+        addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+        if (rawStreamUrl.toLowerCase().endsWith('.mkv')) {
+          addUnique(httpsRaw.replace(/\.mkv$/i, '.mp4'));
+          addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl.replace(/\.mkv$/i, '.mp4'))}`);
+        } else if (rawStreamUrl.toLowerCase().endsWith('.mp4')) {
+          addUnique(httpsRaw.replace(/\.mp4$/i, '.mkv'));
+          addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl.replace(/\.mp4$/i, '.mkv'))}`);
+        }
+        addUnique(`http://localhost:3000/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+        addUnique(rawStreamUrl);
+      } else {
+        // Canais Ao Vivo:
+        addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+        addUnique(httpsRaw);
+        addUnique(`http://localhost:3000/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+        addUnique(rawStreamUrl);
+      }
+    } else {
+      // Em HTTP simples (localhost ou IP local da rede):
+      if (isMovieOrSeriesVod) {
+        addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+        addUnique(rawStreamUrl);
+        addUnique(httpsRaw);
+      } else {
+        addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+        addUnique(rawStreamUrl);
         addUnique(httpsRaw);
       }
-      if (rawStreamUrl.toLowerCase().endsWith('.mkv')) {
-        const mp4Alt = rawStreamUrl.replace(/\.mkv$/i, '.mp4');
-        addUnique(`/api/proxy/stream?url=${encodeURIComponent(mp4Alt)}`);
-      } else if (rawStreamUrl.toLowerCase().endsWith('.mp4')) {
-        const mkvAlt = rawStreamUrl.replace(/\.mp4$/i, '.mkv');
-        addUnique(`/api/proxy/stream?url=${encodeURIComponent(mkvAlt)}`);
-      }
-    }
-
-    // Se estiver navegando via HTTP simples, adiciona fallback direto
-    if (window.location.protocol === 'http:') {
-      addUnique(rawStreamUrl);
-    } else if (rawStreamUrl.startsWith('https://')) {
-      addUnique(rawStreamUrl);
     }
   } else if (streamUrl) {
     addUnique(streamUrl);
@@ -2351,13 +2351,12 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
 
     if (!isMovieOrSeriesVod) {
       // Para TV Ao Vivo:
-      // No navegador web, streams HLS (.m3u8) são infinitamente mais estáveis e compatíveis com proxy chunked
-      if (!isTsStream && window.Hls && Hls.isSupported()) {
-        startHlsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item, resumeTimeSeconds);
-      } else if (isTsStream && window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
+      if (isTsStream && window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
         startMpegTsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item);
       } else if (window.Hls && Hls.isSupported()) {
         startHlsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item, resumeTimeSeconds);
+      } else if (window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
+        startMpegTsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item);
       } else {
         video.src = primaryUrl;
         video.play().catch(() => {});
@@ -2414,22 +2413,8 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
     }
   };
 
-  // Se já temos a URL resolvida em cache ou não precisa de pré-resolução, inicia imediatamente
-  const cachedEntry = clientResolvedStreamCache.get(rawStreamUrl);
-  const cachedEdge = (cachedEntry && Date.now() - cachedEntry.ts < 10 * 60 * 1000) ? cachedEntry.url : '';
-  if (cachedEdge || IS_NATIVE_APK || !rawStreamUrl || !/^https?:\/\//i.test(rawStreamUrl)) {
-    const cands = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod, cachedEdge);
-    playWithCandidates(cands);
-  } else {
-    // Resolve o redirecionamento 302 direto no IP local do cliente (que não sofre 403 do Cloudflare do IPTV)
-    resolveClientStreamRedirect(rawStreamUrl).then(resolvedEdge => {
-      const cands = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod, resolvedEdge);
-      playWithCandidates(cands);
-    }).catch(() => {
-      const cands = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod, '');
-      playWithCandidates(cands);
-    });
-  }
+  const cands = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod);
+  playWithCandidates(cands);
 
   // Se o usuário já estiver com uma sessão ativa no Chromecast e trocar de canal/episódio/filme, envia automaticamente para a TV!
   if (typeof isGoogleCastConnected === 'function' && isGoogleCastConnected()) {

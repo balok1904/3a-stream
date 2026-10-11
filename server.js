@@ -1327,16 +1327,11 @@ app.get('/api/proxy/stream', async (req, res) => {
   res.on('close', cleanupRequest);
 
   try {
-    const clientIp = getClientIp(req);
     const headers = {
       'User-Agent': 'IPTVSmartersPlayer',
       'Accept': '*/*',
       'Connection': 'keep-alive'
     };
-    if (clientIp && clientIp !== 'unknown') {
-      headers['X-Forwarded-For'] = clientIp;
-      headers['X-Real-IP'] = clientIp;
-    }
     if (req.headers.range) {
       headers['Range'] = req.headers.range;
     }
@@ -1383,6 +1378,27 @@ app.get('/api/proxy/stream', async (req, res) => {
       } else {
         break;
       }
+    }
+
+    if (upstream && upstream.status === 403 && currentFetchUrl.startsWith('http://')) {
+      try {
+        const httpsAlternative = currentFetchUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/');
+        const altUpstream = await fetch(httpsAlternative, {
+          method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+          headers,
+          redirect: 'manual',
+          signal: abortController.signal
+        });
+        if (altUpstream.ok || altUpstream.status === 206 || (altUpstream.status >= 301 && altUpstream.status <= 308)) {
+          upstream = altUpstream;
+          currentFetchUrl = httpsAlternative;
+          if (upstream.headers.get('location')) {
+            let loc = upstream.headers.get('location').trim();
+            try { loc = new URL(loc, currentFetchUrl).href; } catch (_) {}
+            currentFetchUrl = loc;
+          }
+        }
+      } catch (_) {}
     }
 
     if (!upstream.ok && upstream.status !== 206) {
