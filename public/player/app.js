@@ -2172,11 +2172,54 @@ function extractRawStreamUrl(streamUrl, item = {}) {
   return streamUrl || '';
 }
 
-function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
+// Cache local de URLs resolvidas de redirecionamento (CDN / Edge) para carregamento instantâneo
+const clientResolvedStreamCache = new Map();
+
+async function resolveClientStreamRedirect(rawUrl) {
+  if (!rawUrl || !/^https?:\/\//i.test(rawUrl)) return rawUrl;
+  const cached = clientResolvedStreamCache.get(rawUrl);
+  if (cached && Date.now() - cached.ts < 10 * 60 * 1000) {
+    return cached.url;
+  }
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2800);
+    const res = await fetch(rawUrl, {
+      method: 'GET',
+      headers: { 'User-Agent': 'IPTVSmartersPlayer' },
+      redirect: 'manual',
+      signal: ctrl.signal
+    });
+    clearTimeout(timer);
+    if ((res.status >= 301 && res.status <= 308) && res.headers.get('location')) {
+      const loc = res.headers.get('location').trim();
+      const finalLoc = new URL(loc, rawUrl).href;
+      clientResolvedStreamCache.set(rawUrl, { url: finalLoc, ts: Date.now() });
+      return finalLoc;
+    }
+  } catch (_) {}
+  return rawUrl;
+}
+
+function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod, resolvedEdgeUrl = '') {
   const candidates = [];
   const addUnique = (u) => {
     if (u && !candidates.includes(u)) candidates.push(u);
   };
+
+  // 1. Se foi resolvida a URL final da CDN/Edge (ex: r2-auth.atlaspainel.net ou IP de edge 38.133.189.116/158.51.123.143)
+  // ela é a prioridade MÁXIMA porque bypassa 100% dos bloqueios de Datacenter/Cloudflare do provedor!
+  if (resolvedEdgeUrl && resolvedEdgeUrl !== rawStreamUrl && /^https?:\/\//i.test(resolvedEdgeUrl)) {
+    if (IS_NATIVE_APK) {
+      addUnique(`http://127.0.0.1:34567/proxy?url=${encodeURIComponent(resolvedEdgeUrl)}`);
+    } else {
+      addUnique(`/api/proxy/stream?url=${encodeURIComponent(resolvedEdgeUrl)}`);
+    }
+    // Fallback direto na CDN/Edge
+    if (window.location.protocol === 'http:' || resolvedEdgeUrl.startsWith('https://')) {
+      addUnique(resolvedEdgeUrl);
+    }
+  }
 
   if (!rawStreamUrl && streamUrl) {
     addUnique(streamUrl);
@@ -2192,8 +2235,7 @@ function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
   }
 
   // No navegador Web (PC, Celular, Smart TV):
-  // 1. Prioridade máxima: o Proxy Local/Servidor Express na mesma origem (/api/proxy/stream)
-  // Isso resolve CORS, Mixed Content (HTTP em HTTPS), redirecionamentos 302 e cabeçalhos de Range sem 403!
+  // 1. Proxy na mesma origem (/api/proxy/stream)
   if (/^https?:\/\//i.test(rawStreamUrl)) {
     addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
 
@@ -2269,72 +2311,87 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
     (appState.preferences && appState.preferences.streamFormat === 'ts')
   );
 
-  const candidates = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod);
-  const primaryUrl = candidates[0] || streamUrl;
-  const fallbackUrls = candidates.slice(1);
-
   destroyPlayers();
 
-  if (!isMovieOrSeriesVod) {
-    // Para TV Ao Vivo:
-    // Se o usuário selecionou MPEG-TS (.ts) e o navegador suporta MSE:
-    if (isTsStream && window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
-      startMpegTsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item);
-    } else if (window.Hls && Hls.isSupported()) {
-      // Formato padrão universal para Web: HLS (.m3u8) com fallback mútuo para .ts
-      startHlsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item, resumeTimeSeconds);
+  // Função interna para iniciar a reprodução com os candidatos prontos
+  const playWithCandidates = (cands) => {
+    const primaryUrl = cands[0] || streamUrl;
+    const fallbackUrls = cands.slice(1);
+
+    if (!isMovieOrSeriesVod) {
+      // Para TV Ao Vivo:
+      if (isTsStream && window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
+        startMpegTsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item);
+      } else if (window.Hls && Hls.isSupported()) {
+        startHlsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item, resumeTimeSeconds);
+      } else {
+        video.src = primaryUrl;
+        video.play().catch(() => {});
+      }
     } else {
-      // Fallback nativo HTML5 (ex: Safari iOS)
+      // Para Filmes e Séries (Cinema Player):
+      let candidateIdx = 0;
+      let stallWatchdogTimer = null;
+
+      const clearWatchdog = () => {
+        if (stallWatchdogTimer) {
+          clearTimeout(stallWatchdogTimer);
+          stallWatchdogTimer = null;
+        }
+      };
+
+      const tryNextCandidate = () => {
+        clearWatchdog();
+        candidateIdx++;
+        if (candidateIdx < cands.length) {
+          const nextUrl = cands[candidateIdx];
+          video.removeAttribute('crossorigin');
+          video.src = nextUrl;
+          video.load();
+          video.play().catch(() => {});
+          armWatchdog();
+        } else {
+          video.onerror = null;
+          if (video.id === 'cinemaVideoElement') {
+            setCinemaBufferingState(false);
+          }
+        }
+      };
+
+      const armWatchdog = () => {
+        clearWatchdog();
+        stallWatchdogTimer = setTimeout(() => {
+          if (video.readyState < 2 && candidateIdx < cands.length - 1) {
+            console.warn('Cinema player: vídeo demorou a responder, alternando candidato...');
+            tryNextCandidate();
+          }
+        }, 9000);
+      };
+
+      video.onerror = tryNextCandidate;
+      video.addEventListener('playing', clearWatchdog, { once: true });
+      video.addEventListener('canplay', clearWatchdog, { once: true });
+
+      armWatchdog();
       video.src = primaryUrl;
       video.play().catch(() => {});
     }
+  };
+
+  // Se já temos a URL resolvida em cache ou não precisa de pré-resolução, inicia imediatamente
+  const cachedEdge = clientResolvedStreamCache.get(rawStreamUrl);
+  if (cachedEdge || IS_NATIVE_APK || !rawStreamUrl || !/^https?:\/\//i.test(rawStreamUrl)) {
+    const cands = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod, cachedEdge ? cachedEdge.url : '');
+    playWithCandidates(cands);
   } else {
-    // Para Filmes e Séries (Cinema Player):
-    let candidateIdx = 0;
-    let stallWatchdogTimer = null;
-
-    const clearWatchdog = () => {
-      if (stallWatchdogTimer) {
-        clearTimeout(stallWatchdogTimer);
-        stallWatchdogTimer = null;
-      }
-    };
-
-    const tryNextCandidate = () => {
-      clearWatchdog();
-      candidateIdx++;
-      if (candidateIdx < candidates.length) {
-        const nextUrl = candidates[candidateIdx];
-        video.removeAttribute('crossorigin');
-        video.src = nextUrl;
-        video.load();
-        video.play().catch(() => {});
-        armWatchdog();
-      } else {
-        video.onerror = null;
-        if (video.id === 'cinemaVideoElement') {
-          setCinemaBufferingState(false);
-        }
-      }
-    };
-
-    const armWatchdog = () => {
-      clearWatchdog();
-      stallWatchdogTimer = setTimeout(() => {
-        if (video.readyState < 2 && candidateIdx < candidates.length - 1) {
-          console.warn('Cinema player: vídeo demorou a responder, alternando candidato...');
-          tryNextCandidate();
-        }
-      }, 9000);
-    };
-
-    video.onerror = tryNextCandidate;
-    video.addEventListener('playing', clearWatchdog, { once: true });
-    video.addEventListener('canplay', clearWatchdog, { once: true });
-
-    armWatchdog();
-    video.src = primaryUrl;
-    video.play().catch(() => {});
+    // Resolve o redirecionamento 302 direto no IP local do cliente (que não sofre 403 do Cloudflare do IPTV)
+    resolveClientStreamRedirect(rawStreamUrl).then(resolvedEdge => {
+      const cands = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod, resolvedEdge);
+      playWithCandidates(cands);
+    }).catch(() => {
+      const cands = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod, '');
+      playWithCandidates(cands);
+    });
   }
 
   // Se o usuário já estiver com uma sessão ativa no Chromecast e trocar de canal/episódio/filme, envia automaticamente para a TV!
@@ -2478,7 +2535,29 @@ async function openSeriesDetailScreen(seriesItem) {
       } catch (_) {}
     }
 
-    // 2. Se estiver na Web, tenta prioritariamente via API do Backend (/api/player/series-info)
+    // 2. No navegador Web, tenta prioritariamente conexão direta via HTTPS (o servidor do provedor tem certificado SSL válido e aceita CORS do browser sem bloqueio 403!)
+    if (!loaded) {
+      try {
+        const res = await fetch(httpsApiUrl);
+        if (res.ok) {
+          const rawData = await res.json();
+          loaded = parseRawXtreamSeriesData(rawData, seriesItem, cleanBase, username, password);
+        }
+      } catch (_) {}
+    }
+
+    // 3. Se estiver em HTTP, tenta conexão direta HTTP
+    if (!loaded && window.location.protocol === 'http:') {
+      try {
+        const res = await fetch(httpApiUrl);
+        if (res.ok) {
+          const rawData = await res.json();
+          loaded = parseRawXtreamSeriesData(rawData, seriesItem, cleanBase, username, password);
+        }
+      } catch (_) {}
+    }
+
+    // 4. Fallback via Backend (/api/player/series-info)
     if (!loaded) {
       try {
         const res = await apiFetch('/api/player/series-info', {
@@ -2500,30 +2579,6 @@ async function openSeriesDetailScreen(seriesItem) {
           }
         }
       } catch (_) {}
-    }
-
-    // 3. Fallback direto HTTPS no próprio navegador caso o backend falhe
-    if (!loaded) {
-      try {
-        const res = await fetch(httpsApiUrl);
-        if (res.ok) {
-          const rawData = await res.json();
-          loaded = parseRawXtreamSeriesData(rawData, seriesItem, cleanBase, username, password);
-        }
-      } catch (_) {}
-    }
-
-    // 4. Fallback HTTP direto caso esteja em contexto HTTP
-    if (!loaded) {
-      try {
-        const res = await fetch(httpApiUrl);
-        if (res.ok) {
-          const rawData = await res.json();
-          loaded = parseRawXtreamSeriesData(rawData, seriesItem, cleanBase, username, password);
-        }
-      } catch (e2) {
-        console.error('Erro ao carregar série:', e2);
-      }
     }
   }
 
