@@ -700,8 +700,45 @@ function formatCleanCategoryName(rawName) {
   return cleaned || String(rawName).trim() || 'Geral';
 }
 
+// Procura catálogo pré-carregado no cache (independente de porta :80 ou formato ts/m3u8)
+function findCachedCatalog(rawBaseUrl, username, password, preferredFormat = 'm3u8') {
+  if (!username || !password) return null;
+  let cleanBase = String(rawBaseUrl || '').trim().replace(/\/+$/, '');
+  if (cleanBase && !/^https?:\/\//i.test(cleanBase)) {
+    cleanBase = 'http://' + cleanBase;
+  }
+  const cleanBaseNoPort = cleanBase ? cleanBase.replace(/:80$/, '') : '';
+  const cleanBaseWithPort = cleanBaseNoPort ? cleanBaseNoPort + ':80' : '';
+
+  const candidateKeys = [
+    `v3|${cleanBaseNoPort}|${username}|${password}|${preferredFormat}`,
+    `v3|${cleanBaseNoPort}|${username}|${password}|${preferredFormat === 'm3u8' ? 'ts' : 'm3u8'}`,
+    `v3|${cleanBaseWithPort}|${username}|${password}|${preferredFormat}`,
+    `v3|${cleanBaseWithPort}|${username}|${password}|${preferredFormat === 'm3u8' ? 'ts' : 'm3u8'}`,
+    `v3|${cleanBase}|${username}|${password}|${preferredFormat}`,
+    `v3|${cleanBase}|${username}|${password}|${preferredFormat === 'm3u8' ? 'ts' : 'm3u8'}`
+  ];
+
+  for (const k of candidateKeys) {
+    const cached = catalogCache.get(k);
+    if (cached && cached.catalog && Array.isArray(cached.catalog.liveStreams) && cached.catalog.liveStreams.length > 50) {
+      return cached.catalog;
+    }
+  }
+
+  // Busca flexível pelas credenciais do cliente caso a URL seja ligeiramente diferente
+  for (const [k, v] of catalogCache.entries()) {
+    if (v && v.catalog && k.includes(`|${username}|${password}`)) {
+      if (Array.isArray(v.catalog.liveStreams) && v.catalog.liveStreams.length > 50) {
+        return v.catalog;
+      }
+    }
+  }
+  return null;
+}
+
 // Busca dados de um servidor Xtream Codes API / XUI One real (player_api.php) de forma sequencial (respeitando max_connections=1)
-async function fetchXtreamCatalog(xtreamUrl, username, password, preferredFormat = 'ts') {
+async function fetchXtreamCatalog(xtreamUrl, username, password, preferredFormat = 'm3u8') {
   let baseUrl = xtreamUrl.trim().replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(baseUrl)) {
     baseUrl = 'http://' + baseUrl;
@@ -709,27 +746,26 @@ async function fetchXtreamCatalog(xtreamUrl, username, password, preferredFormat
   const normalizedBase = baseUrl.replace(/:80$/, '');
 
   const cacheKey = `v3|${normalizedBase}|${username}|${password}|${preferredFormat}`;
-  const cached = catalogCache.get(cacheKey) || catalogCache.get(`v3|${baseUrl}|${username}|${password}|${preferredFormat}`);
-  const hasFullCachedCatalog = Boolean(
-    cached &&
-    cached.catalog &&
-    Array.isArray(cached.catalog.liveStreams) &&
-    cached.catalog.liveStreams.length > 50 &&
-    Array.isArray(cached.catalog.vodStreams) &&
-    cached.catalog.vodStreams.length > 50
-  );
-
-  // Em servidores Cloud (Render/AWS), retorna o catálogo completo em cache imediatamente (TTL de 7 dias com fallback perpétuo)
-  if (hasFullCachedCatalog && Date.now() - cached.timestamp < 7 * 24 * 60 * 60 * 1000) {
-    return cached.catalog;
+  
+  // 1. Verificação instantânea do catálogo em cache (evita timeout de 70s no get_series do provedor)
+  const cachedCatalog = findCachedCatalog(baseUrl, username, password, preferredFormat);
+  if (cachedCatalog) {
+    // Garante que a chave exata solicitada fica salva para retorno imediato O(1)
+    if (!catalogCache.has(cacheKey)) {
+      catalogCache.set(cacheKey, { timestamp: Date.now(), catalog: cachedCatalog });
+    }
+    return cachedCatalog;
   }
 
   const apiBase = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
 
-  // 1. Verifica autenticação
-  const authRes = await fetch(apiBase, { headers: IPTV_HEADERS }).then(r => r.json()).catch(() => null);
+  // 2. Verifica autenticação com timeout seguro de 10s
+  const authCtrl = new AbortController();
+  const authTimer = setTimeout(() => authCtrl.abort(), 10000);
+  const authRes = await fetch(apiBase, { headers: IPTV_HEADERS, signal: authCtrl.signal }).then(r => r.json()).catch(() => null);
+  clearTimeout(authTimer);
+
   if (!authRes || (authRes.user_info && Number(authRes.user_info.auth) === 0)) {
-    if (hasFullCachedCatalog) return cached.catalog;
     throw new Error('Credenciais recusadas pelo servidor IPTV.');
   }
 
@@ -1468,7 +1504,7 @@ app.get('/api/proxy/stream', async (req, res) => {
 // Função unificada para resolver a lista IPTV de um cliente (seja Xtream, M3U com get.php ou M3U puro)
 async function resolveIptvCatalog({ iptvSourceType, xtreamUrl, xtreamUser, xtreamPass, m3uUrl, preferredFormat }) {
   if (iptvSourceType === 'xtream' && xtreamUrl && xtreamUser && xtreamPass) {
-    const catalog = await fetchXtreamCatalog(xtreamUrl, xtreamUser, xtreamPass, preferredFormat || 'ts');
+    const catalog = await fetchXtreamCatalog(xtreamUrl, xtreamUser, xtreamPass, preferredFormat || 'm3u8');
     return { catalog, sourceLabel: `Xtream API (${xtreamUrl})` };
   }
 
@@ -1480,7 +1516,7 @@ async function resolveIptvCatalog({ iptvSourceType, xtreamUrl, xtreamUser, xtrea
         detectedXtream.baseUrl,
         detectedXtream.username,
         detectedXtream.password,
-        preferredFormat || detectedXtream.preferredFormat
+        preferredFormat || detectedXtream.preferredFormat || 'm3u8'
       );
       return {
         catalog,
@@ -1560,7 +1596,7 @@ app.post('/api/player/login', async (req, res) => {
   client.lastLoginAt = new Date().toISOString();
   saveDb(db);
 
-  let catalog = DEMO_CATALOG;
+  let catalog = null;
   let sourceLabel = 'Servidor 3A Stream Oficial (Integrado)';
 
   try {
@@ -1570,12 +1606,42 @@ app.post('/api/player/login', async (req, res) => {
       xtreamUser: client.xtreamUser,
       xtreamPass: client.xtreamPass,
       m3uUrl: client.m3uUrl,
-      preferredFormat: preferredFormat || 'ts'
+      preferredFormat: preferredFormat || 'm3u8'
     });
     catalog = resolved.catalog;
     sourceLabel = resolved.sourceLabel;
   } catch (err) {
     console.warn('Aviso: Falha ao carregar fonte externa:', err.message);
+  }
+
+  // Se o catálogo retornou vazio, incompleto ou caiu no DEMO_CATALOG, busca na contingência perpétua do cache!
+  const isCatalogIncomplete =
+    !catalog ||
+    !catalog.isRealList ||
+    !Array.isArray(catalog.liveStreams) ||
+    catalog.liveStreams.length < 50;
+
+  if (isCatalogIncomplete) {
+    let targetBase = client.xtreamUrl;
+    let targetUser = client.xtreamUser;
+    let targetPass = client.xtreamPass;
+
+    if (!targetUser && client.m3uUrl) {
+      const extX = extractXtreamFromM3uUrl(client.m3uUrl);
+      if (extX) {
+        targetBase = extX.baseUrl;
+        targetUser = extX.username;
+        targetPass = extX.password;
+      }
+    }
+
+    const cachedFallback = findCachedCatalog(targetBase, targetUser, targetPass, preferredFormat || 'm3u8');
+    if (cachedFallback) {
+      catalog = cachedFallback;
+      sourceLabel = `Servidor IPTV (${targetBase || '3A Stream'} • ${catalog.liveStreams.length} Canais)`;
+    } else if (!catalog) {
+      catalog = DEMO_CATALOG;
+    }
   }
 
   let resolvedXtreamOrigin = catalog && catalog.xtreamOrigin ? catalog.xtreamOrigin : null;
@@ -1629,10 +1695,31 @@ app.post('/api/player/custom-playlist', async (req, res) => {
       xtreamUser,
       xtreamPass,
       m3uUrl,
-      preferredFormat: preferredFormat || 'ts'
+      preferredFormat: preferredFormat || 'm3u8'
     });
     return res.json({ ok: true, sourceLabel: resolved.sourceLabel, catalog: resolved.catalog });
   } catch (err) {
+    // Fallback de contingência caso o provedor tenha sofrido bloqueio temporário ou timeout
+    let targetBase = xtreamUrl;
+    let targetUser = xtreamUser;
+    let targetPass = xtreamPass;
+    if (mode === 'm3u' && m3uUrl) {
+      const extX = extractXtreamFromM3uUrl(m3uUrl);
+      if (extX) {
+        targetBase = extX.baseUrl;
+        targetUser = extX.username;
+        targetPass = extX.password;
+      }
+    }
+    const cached = findCachedCatalog(targetBase, targetUser, targetPass, preferredFormat || 'm3u8');
+    if (cached) {
+      return res.json({
+        ok: true,
+        sourceLabel: `Servidor IPTV (${targetBase || '3A Stream'} • ${cached.liveStreams.length} Canais)`,
+        catalog: cached
+      });
+    }
+
     return res.status(500).json({
       ok: false,
       error: `Não foi possível conectar ao servidor informado: ${err.message}`

@@ -426,7 +426,12 @@ async function handleDirectXtreamSubmit(event) {
       name: `Xtream (${xtreamUser})`,
       username: xtreamUser,
       expiresAtFormatted: '15/06/2026',
-      sourceLabel: data.sourceLabel
+      sourceLabel: data.sourceLabel,
+      xtreamOrigin: (data.catalog && data.catalog.xtreamOrigin) || {
+        baseUrl: xtreamUrl.trim().replace(/\/+$/, ''),
+        username: xtreamUser.trim(),
+        password: xtreamPass.trim()
+      }
     };
     document.getElementById('homeClientName').textContent = appState.profile.name;
     document.getElementById('homeExpirationDate').textContent = appState.profile.expiresAtFormatted;
@@ -491,13 +496,30 @@ async function handleDirectM3uSubmit(event) {
       return;
     }
 
+    let m3uOrigin = (data.catalog && data.catalog.xtreamOrigin) || null;
+    if (!m3uOrigin && m3uUrl) {
+      try {
+        const parsed = new URL(m3uUrl);
+        const u = parsed.searchParams.get('username');
+        const p = parsed.searchParams.get('password');
+        if (u && p) {
+          m3uOrigin = {
+            baseUrl: `${parsed.protocol}//${parsed.host}`,
+            username: u,
+            password: p
+          };
+        }
+      } catch (_) {}
+    }
+
     appState.loggedIn = true;
     appState.catalog = data.catalog;
     appState.profile = {
       name: 'Assinante M3U',
       username: 'm3u_user',
       expiresAtFormatted: '15/06/2026',
-      sourceLabel: data.sourceLabel
+      sourceLabel: data.sourceLabel,
+      xtreamOrigin: m3uOrigin
     };
     document.getElementById('homeClientName').textContent = appState.profile.name;
     document.getElementById('homeExpirationDate').textContent = appState.profile.expiresAtFormatted;
