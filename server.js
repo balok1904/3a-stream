@@ -31,6 +31,7 @@ const { Readable } = require('stream');
 })();
 
 const app = express();
+app.set('trust proxy', 1);
 app.disable('x-powered-by');
 const PORT = process.env.PORT || 3000;
 
@@ -159,69 +160,6 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, localProxy: true });
 });
 
-app.get('/api/debug/test-curl', async (req, res) => {
-  const { exec } = require('child_process');
-  const https = require('https');
-  const http = require('http');
-
-  const testUrl = req.query.url || 'http://sev3u.sbs/live/371047218/357753734/3424810.m3u8';
-  const httpsTestUrl = testUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/');
-
-  const results = {};
-
-  // 1. Teste via curl nativo do Linux
-  try {
-    results.curlHttp = await new Promise(resolve => {
-      exec(`curl -I -s -m 5 -A "IPTVSmartersPlayer" "${testUrl}"`, (err, stdout, stderr) => {
-        resolve({ err: err ? err.message : null, out: stdout ? stdout.slice(0, 300) : null });
-      });
-    });
-  } catch (e) { results.curlHttp = e.message; }
-
-  try {
-    results.curlHttps = await new Promise(resolve => {
-      exec(`curl -I -s -m 5 -A "IPTVSmartersPlayer" "${httpsTestUrl}"`, (err, stdout, stderr) => {
-        resolve({ err: err ? err.message : null, out: stdout ? stdout.slice(0, 300) : null });
-      });
-    });
-  } catch (e) { results.curlHttps = e.message; }
-
-  // 2. Teste via http/https nativo do Node.js (sem undici/fetch)
-  try {
-    results.nativeNodeHttp = await new Promise(resolve => {
-      const client = testUrl.startsWith('https') ? https : http;
-      const reqObj = client.get(testUrl, {
-        headers: { 'User-Agent': 'IPTVSmartersPlayer', 'Accept': '*/*' }
-      }, (resObj) => {
-        resolve({
-          statusCode: resObj.statusCode,
-          headers: resObj.headers
-        });
-        resObj.resume();
-      });
-      reqObj.on('error', err => resolve({ err: err.message }));
-      reqObj.setTimeout(4000, () => { reqObj.abort(); resolve({ err: 'timeout' }); });
-    });
-  } catch (e) { results.nativeNodeHttp = e.message; }
-
-  try {
-    results.nativeNodeHttps = await new Promise(resolve => {
-      const reqObj = https.get(httpsTestUrl, {
-        headers: { 'User-Agent': 'IPTVSmartersPlayer', 'Accept': '*/*' }
-      }, (resObj) => {
-        resolve({
-          statusCode: resObj.statusCode,
-          headers: resObj.headers
-        });
-        resObj.resume();
-      });
-      reqObj.on('error', err => resolve({ err: err.message }));
-      reqObj.setTimeout(4000, () => { reqObj.abort(); resolve({ err: 'timeout' }); });
-    });
-  } catch (e) { results.nativeNodeHttps = e.message; }
-
-  res.json({ ok: true, results });
-});
 
 // Diretório de dados persistentes
 const DATA_DIR = path.join(__dirname, 'data');
@@ -1471,7 +1409,9 @@ app.get('/api/proxy/stream', async (req, res) => {
       vodRedirectCache.set(targetUrl, { url: finalUrl, ts: Date.now() });
     }
 
-    const proxyHostPrefix = `${req.protocol}://${req.get('host')}`;
+    const isHttpsReq = req.secure || req.headers['x-forwarded-proto'] === 'https' || (req.get('host') || '').includes('onrender.com');
+    const proto = isHttpsReq ? 'https' : (req.protocol || 'http');
+    const proxyHostPrefix = `${proto}://${req.get('host')}`;
 
     // Se for playlist HLS (.m3u8), reescreve os caminhos relativos e URIs de chaves/mapas para passarem pelo proxy
     if (
@@ -1508,7 +1448,7 @@ app.get('/api/proxy/stream', async (req, res) => {
               absUrl = `${basePath}${trimmed}`;
             }
           }
-          return `${proxyHostPrefix}/api/proxy/stream?url=${encodeURIComponent(absUrl)}`;
+          return `/api/proxy/stream?url=${encodeURIComponent(absUrl)}`;
         })
         .join('\n');
 

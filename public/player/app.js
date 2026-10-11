@@ -2173,57 +2173,62 @@ function extractRawStreamUrl(streamUrl, item = {}) {
 }
 
 // Cache local de URLs resolvidas de redirecionamento (CDN / Edge) para carregamento instantâneo
+// Cache local de URLs resolvidas de redirecionamento (CDN / Edge) para carregamento instantâneo
 const clientResolvedStreamCache = new Map();
 
 async function resolveClientStreamRedirect(rawUrl) {
   if (!rawUrl || !/^https?:\/\//i.test(rawUrl)) return rawUrl;
+  if (IS_NATIVE_APK) return rawUrl;
+  if (rawUrl.includes('/api/proxy/stream') || rawUrl.includes('127.0.0.1')) {
+    return rawUrl;
+  }
+
   const cached = clientResolvedStreamCache.get(rawUrl);
-  if (cached && Date.now() - cached.ts < 10 * 60 * 1000) {
+  if (cached && Date.now() - cached.ts < 5 * 60 * 1000) {
     return cached.url;
   }
 
-  // Se a página estiver rodando em HTTPS, converte chamada do servidor IPTV para HTTPS para evitar Mixed Content
-  const fetchUrl = (window.location.protocol === 'https:' && rawUrl.startsWith('http://'))
-    ? rawUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/')
-    : rawUrl;
+  const httpsUrl = rawUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/');
 
-  // 1. Tenta fetch com redirect: 'manual' (pega o cabeçalho 'location' de 302 direto do Cloudflare com CORS)
-  try {
-    const ctrlManual = new AbortController();
-    const tManual = setTimeout(() => ctrlManual.abort(), 2500);
-    const resManual = await fetch(fetchUrl, {
-      method: 'GET',
-      headers: { 'User-Agent': 'IPTVSmartersPlayer' },
-      redirect: 'manual',
-      signal: ctrlManual.signal
-    });
-    clearTimeout(tManual);
-    if (resManual && (resManual.status >= 301 && resManual.status <= 308) && resManual.headers.get('location')) {
-      const loc = resManual.headers.get('location').trim();
-      const finalLoc = new URL(loc, fetchUrl).href;
-      clientResolvedStreamCache.set(rawUrl, { url: finalLoc, ts: Date.now() });
-      return finalLoc;
-    }
-  } catch (_) {}
+  return new Promise((resolve) => {
+    const probe = document.createElement('video');
+    probe.preload = 'none';
+    probe.muted = true;
+    let done = false;
 
-  // 2. Tenta fetch com Range: bytes=0-0 e redirect: 'follow' (o browser segue o 302 e res.url contém a URL da CDN/Edge!)
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 2500);
-    const res = await fetch(fetchUrl, {
-      method: 'GET',
-      headers: { 'Range': 'bytes=0-0' },
-      redirect: 'follow',
-      signal: ctrl.signal
-    });
-    clearTimeout(timer);
-    if (res && res.url && res.url !== fetchUrl && /^https?:\/\//i.test(res.url)) {
-      clientResolvedStreamCache.set(rawUrl, { url: res.url, ts: Date.now() });
-      return res.url;
-    }
-  } catch (_) {}
+    const finish = (resultUrl) => {
+      if (done) return;
+      done = true;
+      try {
+        probe.onerror = null;
+        probe.onloadedmetadata = null;
+        probe.removeAttribute('src');
+        probe.load();
+      } catch (_) {}
+      if (resultUrl && resultUrl !== rawUrl && resultUrl !== httpsUrl && /^https?:\/\//i.test(resultUrl)) {
+        clientResolvedStreamCache.set(rawUrl, { url: resultUrl, ts: Date.now() });
+        resolve(resultUrl);
+      } else {
+        resolve(rawUrl);
+      }
+    };
 
-  return rawUrl;
+    const t = setTimeout(() => {
+      finish(probe.currentSrc || rawUrl);
+    }, 1500);
+
+    probe.onerror = () => {
+      clearTimeout(t);
+      finish(probe.currentSrc || rawUrl);
+    };
+
+    probe.onloadedmetadata = () => {
+      clearTimeout(t);
+      finish(probe.currentSrc || rawUrl);
+    };
+
+    probe.src = httpsUrl;
+  });
 }
 
 function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
@@ -2255,9 +2260,15 @@ function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
 
     // Se estiver hospedado no Render (HTTPS) ou em qualquer host HTTPS:
     if (window.location.protocol === 'https:' || window.location.hostname.includes('onrender.com')) {
+      // Se já tivermos o nó de borda HTTP em cache (resolvido anteriormente):
+      const cachedEdge = clientResolvedStreamCache.get(rawStreamUrl);
+      if (cachedEdge && cachedEdge.url && /^http:\/\//i.test(cachedEdge.url)) {
+        addUnique(`/api/proxy/stream?url=${encodeURIComponent(cachedEdge.url)}`);
+      }
+
       if (isMovieOrSeriesVod) {
         // Filmes e Séries (VOD):
-        // Candidato #1: HTTPS direto (reproduz com CDN SSL sem sofrer bloqueio 403 do datacenter Render)
+        // Candidato direto (para Filmes funciona 100% via CDN SSL):
         addUnique(httpsRaw);
         addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
         if (rawStreamUrl.toLowerCase().endsWith('.mkv')) {
@@ -2271,7 +2282,6 @@ function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
         addUnique(rawStreamUrl);
       } else {
         // Canais Ao Vivo (Live):
-        // Candidato #1: HTTPS direto para HLS (.m3u8) / TS
         addUnique(httpsRaw);
         addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
         addUnique(`http://localhost:3000/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
@@ -2347,6 +2357,27 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
 
     if (!isMovieOrSeriesVod) {
       // Para TV Ao Vivo:
+      // Se estiver no navegador Web HTTPS (Render), resolvemos o nó de borda de forma não-bloqueante para alimentar Hls.js
+      if ((window.location.protocol === 'https:' || window.location.hostname.includes('onrender.com')) && !IS_NATIVE_APK) {
+        resolveClientStreamRedirect(rawStreamUrl).then((resolvedUrl) => {
+          let livePlayUrl = primaryUrl;
+          if (resolvedUrl && resolvedUrl !== rawStreamUrl && /^http:\/\//i.test(resolvedUrl)) {
+            livePlayUrl = `/api/proxy/stream?url=${encodeURIComponent(resolvedUrl)}`;
+          }
+          if (isTsStream && window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
+            startMpegTsPlayback(video, livePlayUrl, fallbackUrls, rawStreamUrl, item);
+          } else if (window.Hls && Hls.isSupported()) {
+            startHlsPlayback(video, livePlayUrl, fallbackUrls, rawStreamUrl, item, resumeTimeSeconds);
+          } else if (window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
+            startMpegTsPlayback(video, livePlayUrl, fallbackUrls, rawStreamUrl, item);
+          } else {
+            video.src = livePlayUrl;
+            video.play().catch(() => {});
+          }
+        });
+        return;
+      }
+
       if (isTsStream && window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
         startMpegTsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item);
       } else if (window.Hls && Hls.isSupported()) {
@@ -2359,8 +2390,22 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
       }
     } else {
       // Para Filmes e Séries (Cinema Player):
+      let triedEdgeProxy = false;
       let candidateIdx = 0;
       video.onerror = () => {
+        const curSrc = video.currentSrc || '';
+        // Se o navegador seguiu o redirecionamento 302 para um nó de borda HTTP (ex: http://158.51.123.143:80/vauth/...)
+        // que foi bloqueado por Mixed Content, despachamos para o nosso proxy HTTPS!
+        if (!triedEdgeProxy && curSrc && /^http:\/\//i.test(curSrc) && !curSrc.includes('/api/proxy/stream')) {
+          triedEdgeProxy = true;
+          clientResolvedStreamCache.set(rawStreamUrl, { url: curSrc, ts: Date.now() });
+          video.removeAttribute('crossorigin');
+          video.src = `/api/proxy/stream?url=${encodeURIComponent(curSrc)}`;
+          video.load();
+          video.play().catch(() => {});
+          return;
+        }
+
         candidateIdx++;
         if (candidateIdx < cands.length) {
           const nextUrl = cands[candidateIdx];
@@ -3325,7 +3370,21 @@ function startHlsPlayback(videoElement, hlsUrl, fallbackUrls = [], rawStreamUrl 
           case Hls.ErrorTypes.NETWORK_ERROR:
             if (!hasRecoveredNetwork) {
               hasRecoveredNetwork = true;
-              hlsInstance.startLoad();
+              if ((window.location.protocol === 'https:' || window.location.hostname.includes('onrender.com')) && !IS_NATIVE_APK) {
+                resolveClientStreamRedirect(rawStreamUrl).then((edgeUrl) => {
+                  if (edgeUrl && edgeUrl !== rawStreamUrl && /^http:\/\//i.test(edgeUrl)) {
+                    const proxyUrl = `/api/proxy/stream?url=${encodeURIComponent(edgeUrl)}`;
+                    hlsInstance.loadSource(proxyUrl);
+                    hlsInstance.startLoad();
+                  } else {
+                    hlsInstance.startLoad();
+                  }
+                }).catch(() => {
+                  hlsInstance.startLoad();
+                });
+              } else {
+                hlsInstance.startLoad();
+              }
             } else {
               fallbackTsOrNext();
             }
