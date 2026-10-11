@@ -2433,20 +2433,6 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
   const cands = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod);
   playWithCandidates(cands);
 
-  // No navegador Web (HTTPS), resolve a URL final de redirecionamento (IP de borda) em segundo plano
-  // Se ainda não estava em cache, atualiza o cache e, se o player ainda estiver buscando/parado, reinjeta a URL de borda no proxy!
-  if (!IS_NATIVE_APK && rawStreamUrl && !clientResolvedStreamCache.has(rawStreamUrl) && (window.location.protocol === 'https:' || window.location.hostname.includes('onrender.com'))) {
-    resolveClientStreamRedirect(rawStreamUrl).then((resolvedUrl) => {
-      if (resolvedUrl && resolvedUrl !== rawStreamUrl) {
-        const freshCands = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod);
-        // Se o player ainda não começou a reproduzir (readyState < 2), atualiza imediatamente com os novos candidatos (incluindo o proxy da borda)
-        if (video.readyState < 2) {
-          playWithCandidates(freshCands);
-        }
-      }
-    }).catch(() => {});
-  }
-
   // Se o usuário já estiver com uma sessão ativa no Chromecast e trocar de canal/episódio/filme, envia automaticamente para a TV!
   if (typeof isGoogleCastConnected === 'function' && isGoogleCastConnected()) {
     setTimeout(() => {
