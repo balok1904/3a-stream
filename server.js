@@ -159,60 +159,6 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, localProxy: true });
 });
 
-app.get('/api/debug/probe', async (req, res) => {
-  const target = req.query.url || 'http://sev3u.sbs/live/371047218/357753734/3424810.m3u8';
-  const uas = [
-    'IPTVSmartersPlayer',
-    'VLC/3.0.18 LibVLC/3.0.18',
-    'Lavf/58.76.100',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'okhttp/4.9.0',
-    'Kodi/20.0 (Windows NT 10.0; Win64; x64) App_Bitness/64 Version/20.0-Git:20230115-144ab9d9ae',
-    ''
-  ];
-  const urlsToTest = [
-    target,
-    target.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/'),
-    target.replace('sev3u.sbs', '206.109.57.235')
-  ];
-  const results = [];
-
-  for (const u of urlsToTest) {
-    for (const ua of uas) {
-      try {
-        const headers = { 'Accept': '*/*' };
-        if (ua) headers['User-Agent'] = ua;
-        if (u.includes('206.109.57.235')) headers['Host'] = 'sev3u.sbs';
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 3500);
-        const upstream = await fetch(u, {
-          method: 'GET',
-          headers,
-          redirect: 'manual',
-          signal: ctrl.signal
-        });
-        clearTimeout(t);
-        const loc = upstream.headers.get('location');
-        const textSample = (upstream.status === 403 || upstream.status === 200) ? (await upstream.text()).slice(0, 150) : '';
-        results.push({
-          url: u,
-          ua: ua || '(none)',
-          status: upstream.status,
-          location: loc,
-          sample: textSample
-        });
-        if (loc) {
-          // encontrou redirect!
-          break;
-        }
-      } catch (err) {
-        results.push({ url: u, ua: ua || '(none)', error: err.message });
-      }
-    }
-  }
-  res.json({ ok: true, results });
-});
-
 // Diretório de dados persistentes
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, '3a_stream_db.json');

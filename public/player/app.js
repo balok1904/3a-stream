@@ -2253,18 +2253,11 @@ function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
   if (/^https?:\/\//i.test(rawStreamUrl)) {
     const httpsRaw = rawStreamUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/');
 
-    // Se temos a URL final da borda/CDN em cache (resolvida sem bloqueio de datacenter), monta a rota do proxy segura
-    const cachedEdge = clientResolvedStreamCache.get(rawStreamUrl);
-    const edgeUrl = cachedEdge ? cachedEdge.url : null;
-    const edgeProxyUrl = edgeUrl ? `/api/proxy/stream?url=${encodeURIComponent(edgeUrl)}` : null;
-
     // Se estiver hospedado no Render (HTTPS) ou em qualquer host HTTPS:
     if (window.location.protocol === 'https:' || window.location.hostname.includes('onrender.com')) {
       if (isMovieOrSeriesVod) {
-        // Filmes e Séries:
-        // Se temos o proxy da URL de borda já resolvida (ex: 158.51.123.143), insere como candidato de topo!
-        if (edgeProxyUrl) addUnique(edgeProxyUrl);
-        // O elemento <video> tenta direto via HTTPS (funciona perfeitamente para filmes CDN SSL!)
+        // Filmes e Séries (VOD):
+        // Candidato #1: HTTPS direto (reproduz com CDN SSL sem sofrer bloqueio 403 do datacenter Render)
         addUnique(httpsRaw);
         addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
         if (rawStreamUrl.toLowerCase().endsWith('.mkv')) {
@@ -2277,17 +2270,15 @@ function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod) {
         addUnique(`http://localhost:3000/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
         addUnique(rawStreamUrl);
       } else {
-        // Canais Ao Vivo:
-        // Se temos o proxy da URL de borda já resolvida (ex: 38.133.189.116 TS), prioridade máxima!
-        if (edgeProxyUrl) addUnique(edgeProxyUrl);
-        addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
+        // Canais Ao Vivo (Live):
+        // Candidato #1: HTTPS direto para HLS (.m3u8) / TS
         addUnique(httpsRaw);
+        addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
         addUnique(`http://localhost:3000/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
         addUnique(rawStreamUrl);
       }
     } else {
       // Em HTTP simples (localhost ou IP local da rede):
-      if (edgeProxyUrl) addUnique(edgeProxyUrl);
       addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
       addUnique(rawStreamUrl);
       addUnique(httpsRaw);
@@ -2349,7 +2340,7 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
 
   destroyPlayers();
 
-  // Função interna para iniciar a reprodução com os candidatos prontos
+  // Função interna para iniciar a reprodução com os candidatos estáveis
   const playWithCandidates = (cands) => {
     const primaryUrl = cands[0] || streamUrl;
     const fallbackUrls = cands.slice(1);
@@ -2369,29 +2360,7 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
     } else {
       // Para Filmes e Séries (Cinema Player):
       let candidateIdx = 0;
-      let stallWatchdogTimer = null;
-
-      const clearWatchdog = () => {
-        if (stallWatchdogTimer) {
-          clearTimeout(stallWatchdogTimer);
-          stallWatchdogTimer = null;
-        }
-      };
-
-      const tryNextCandidate = () => {
-        clearWatchdog();
-        // Se o elemento de vídeo falhou porque tentou seguir um 302 para um IP HTTP (Mixed Content),
-        // video.currentSrc conterá a URL final de borda (ex: http://158.51.123.143:80/vauth/...)!
-        try {
-          const currentSrc = video.currentSrc || '';
-          if (currentSrc && /^http:\/\//i.test(currentSrc) && !currentSrc.includes('/api/proxy/stream')) {
-            const edgeProxyUrl = `/api/proxy/stream?url=${encodeURIComponent(currentSrc)}`;
-            if (!cands.includes(edgeProxyUrl)) {
-              cands.splice(candidateIdx + 1, 0, edgeProxyUrl);
-            }
-          }
-        } catch (_) {}
-
+      video.onerror = () => {
         candidateIdx++;
         if (candidateIdx < cands.length) {
           const nextUrl = cands[candidateIdx];
@@ -2399,7 +2368,6 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
           video.src = nextUrl;
           video.load();
           video.play().catch(() => {});
-          armWatchdog();
         } else {
           video.onerror = null;
           if (video.id === 'cinemaVideoElement') {
@@ -2408,24 +2376,8 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
         }
       };
 
-      const armWatchdog = () => {
-        clearWatchdog();
-        stallWatchdogTimer = setTimeout(() => {
-          if (video.readyState < 2 && candidateIdx < cands.length - 1) {
-            console.warn('Cinema player: vídeo demorou a responder, alternando candidato...');
-            tryNextCandidate();
-          }
-        }, 4000);
-      };
-
-      video.onerror = tryNextCandidate;
-      video.addEventListener('playing', clearWatchdog, { once: true });
-      video.addEventListener('canplay', clearWatchdog, { once: true });
-
-      armWatchdog();
       video.removeAttribute('crossorigin');
       video.src = primaryUrl;
-      video.load();
       video.play().catch(() => {});
     }
   };
