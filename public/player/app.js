@@ -2181,23 +2181,48 @@ async function resolveClientStreamRedirect(rawUrl) {
   if (cached && Date.now() - cached.ts < 10 * 60 * 1000) {
     return cached.url;
   }
+
+  // Se a página estiver rodando em HTTPS, converte chamada do servidor IPTV para HTTPS para evitar Mixed Content
+  const fetchUrl = (window.location.protocol === 'https:' && rawUrl.startsWith('http://'))
+    ? rawUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/')
+    : rawUrl;
+
+  // 1. Tenta fetch com Range: bytes=0-0 e redirect: 'follow' (no browser, o fetch com CORS do servidor IPTV revela res.url com a URL final na CDN/Edge!)
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 2800);
-    const res = await fetch(rawUrl, {
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    const res = await fetch(fetchUrl, {
       method: 'GET',
-      headers: { 'User-Agent': 'IPTVSmartersPlayer' },
-      redirect: 'manual',
+      headers: { 'Range': 'bytes=0-0' },
+      redirect: 'follow',
       signal: ctrl.signal
     });
     clearTimeout(timer);
-    if ((res.status >= 301 && res.status <= 308) && res.headers.get('location')) {
-      const loc = res.headers.get('location').trim();
-      const finalLoc = new URL(loc, rawUrl).href;
+    if (res && res.url && res.url !== fetchUrl && /^https?:\/\//i.test(res.url)) {
+      clientResolvedStreamCache.set(rawUrl, { url: res.url, ts: Date.now() });
+      return res.url;
+    }
+  } catch (_) {}
+
+  // 2. Tenta fetch manual com redirect: 'manual' (para ambientes onde o header Location seja exposto)
+  try {
+    const ctrl2 = new AbortController();
+    const timer2 = setTimeout(() => ctrl2.abort(), 2000);
+    const res2 = await fetch(fetchUrl, {
+      method: 'GET',
+      headers: { 'User-Agent': 'IPTVSmartersPlayer' },
+      redirect: 'manual',
+      signal: ctrl2.signal
+    });
+    clearTimeout(timer2);
+    if (res2 && (res2.status >= 301 && res2.status <= 308) && res2.headers.get('location')) {
+      const loc = res2.headers.get('location').trim();
+      const finalLoc = new URL(loc, fetchUrl).href;
       clientResolvedStreamCache.set(rawUrl, { url: finalLoc, ts: Date.now() });
       return finalLoc;
     }
   } catch (_) {}
+
   return rawUrl;
 }
 
@@ -2235,12 +2260,18 @@ function buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod, r
   }
 
   // No navegador Web (PC, Celular, Smart TV):
-  // 1. Proxy na mesma origem (/api/proxy/stream)
   if (/^https?:\/\//i.test(rawStreamUrl)) {
+    // Se o browser estiver em HTTPS e o IPTV tiver SSL, tentar URL HTTPS direta
+    const httpsRaw = rawStreamUrl.replace(/^http:\/\//i, 'https://').replace(/:80\//, '/');
+
+    // 1. Proxy na mesma origem com a URL do stream
     addUnique(`/api/proxy/stream?url=${encodeURIComponent(rawStreamUrl)}`);
 
-    // Para filmes e séries: caso o container original seja .mkv (que navegadores não tocam nativamente), tenta também .mp4
+    // 2. Se for filme ou série, permite que o elemento de vídeo tente tocar a URL HTTPS direta (o player do browser segue redirects nativamente sem restrição de CORS)
     if (isMovieOrSeriesVod) {
+      if (window.location.protocol === 'https:') {
+        addUnique(httpsRaw);
+      }
       if (rawStreamUrl.toLowerCase().endsWith('.mkv')) {
         const mp4Alt = rawStreamUrl.replace(/\.mkv$/i, '.mp4');
         addUnique(`/api/proxy/stream?url=${encodeURIComponent(mp4Alt)}`);
@@ -2320,7 +2351,10 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
 
     if (!isMovieOrSeriesVod) {
       // Para TV Ao Vivo:
-      if (isTsStream && window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
+      // No navegador web, streams HLS (.m3u8) são infinitamente mais estáveis e compatíveis com proxy chunked
+      if (!isTsStream && window.Hls && Hls.isSupported()) {
+        startHlsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item, resumeTimeSeconds);
+      } else if (isTsStream && window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
         startMpegTsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item);
       } else if (window.Hls && Hls.isSupported()) {
         startHlsPlayback(video, primaryUrl, fallbackUrls, rawStreamUrl, item, resumeTimeSeconds);
@@ -2365,7 +2399,7 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
             console.warn('Cinema player: vídeo demorou a responder, alternando candidato...');
             tryNextCandidate();
           }
-        }, 9000);
+        }, 4000);
       };
 
       video.onerror = tryNextCandidate;
@@ -2373,15 +2407,18 @@ function startStreamOnVideoElement(video, streamUrl, item = {}, resumeTimeSecond
       video.addEventListener('canplay', clearWatchdog, { once: true });
 
       armWatchdog();
+      video.removeAttribute('crossorigin');
       video.src = primaryUrl;
+      video.load();
       video.play().catch(() => {});
     }
   };
 
   // Se já temos a URL resolvida em cache ou não precisa de pré-resolução, inicia imediatamente
-  const cachedEdge = clientResolvedStreamCache.get(rawStreamUrl);
+  const cachedEntry = clientResolvedStreamCache.get(rawStreamUrl);
+  const cachedEdge = (cachedEntry && Date.now() - cachedEntry.ts < 10 * 60 * 1000) ? cachedEntry.url : '';
   if (cachedEdge || IS_NATIVE_APK || !rawStreamUrl || !/^https?:\/\//i.test(rawStreamUrl)) {
-    const cands = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod, cachedEdge ? cachedEdge.url : '');
+    const cands = buildStreamCandidateUrls(rawStreamUrl, streamUrl, isMovieOrSeriesVod, cachedEdge);
     playWithCandidates(cands);
   } else {
     // Resolve o redirecionamento 302 direto no IP local do cliente (que não sofre 403 do Cloudflare do IPTV)
